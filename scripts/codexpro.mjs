@@ -1322,12 +1322,14 @@ function requestQuickTunnelViaCurl(proxyUrl) {
 function writeQuickTunnelCredentials(tunnel) {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codexpro-cloudflare-quick-'));
   const credentialsPath = path.join(tmpRoot, 'credentials.json');
+  const configPath = path.join(tmpRoot, 'config.yml');
   fs.writeFileSync(credentialsPath, JSON.stringify({
     AccountTag: tunnel.accountTag,
     TunnelSecret: tunnel.secret,
     TunnelID: tunnel.id
   }, null, 2), { mode: 0o600 });
-  return { tmpRoot, credentialsPath };
+  fs.writeFileSync(configPath, 'no-autoupdate: true\n', { mode: 0o600 });
+  return { tmpRoot, credentialsPath, configPath };
 }
 
 function killProcess(child) {
@@ -4384,21 +4386,33 @@ async function main() {
     let publicBase = '';
     if (proxyUrl) {
       const quickTunnel = requestQuickTunnelViaCurl(proxyUrl);
-      const { tmpRoot, credentialsPath } = writeQuickTunnelCredentials(quickTunnel);
+      const { tmpRoot, credentialsPath, configPath } = writeQuickTunnelCredentials(quickTunnel);
       const removeCredentials = () => fs.rmSync(tmpRoot, { recursive: true, force: true });
       cleanupTunnelCredentials = removeCredentials;
       try {
-        cloudflared = spawnLogged('cloudflared', cloudflaredPath, ['tunnel', '--url', localBase, '--credentials-file', credentialsPath, 'run', quickTunnel.id], { cwd: root, env: process.env, verbose: verboseLogs });
+        cloudflared = spawnLogged('cloudflared', cloudflaredPath, ['tunnel', '--config', configPath, '--url', localBase, '--credentials-file', credentialsPath, 'run', quickTunnel.id], { cwd: root, env: process.env, verbose: verboseLogs });
       } catch (error) {
         removeCredentials();
         throw error;
       }
       cloudflared.once('exit', removeCredentials);
       cloudflared.once('error', removeCredentials);
-      await waitForTunnelStartup(cloudflared, 'cloudflared');
+      await waitForTunnelStartup(cloudflared, 'cloudflared', 3000);
       publicBase = `https://${quickTunnel.hostname}`;
     } else {
-      cloudflared = spawnLogged('cloudflared', cloudflaredPath, ['tunnel', '--url', localBase], { cwd: root, env: process.env, verbose: verboseLogs });
+      const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codexpro-cloudflare-quick-'));
+      const configPath = path.join(tmpRoot, 'config.yml');
+      fs.writeFileSync(configPath, 'no-autoupdate: true\n', { mode: 0o600 });
+      const removeConfig = () => fs.rmSync(tmpRoot, { recursive: true, force: true });
+      cleanupTunnelCredentials = removeConfig;
+      try {
+        cloudflared = spawnLogged('cloudflared', cloudflaredPath, ['tunnel', '--config', configPath, '--url', localBase], { cwd: root, env: process.env, verbose: verboseLogs });
+      } catch (error) {
+        removeConfig();
+        throw error;
+      }
+      cloudflared.once('exit', removeConfig);
+      cloudflared.once('error', removeConfig);
       publicBase = await waitForCloudflareUrl(cloudflared);
     }
     const details = printConnectorBlock(`${publicBase}/mcp`, token, {
