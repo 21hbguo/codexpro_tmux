@@ -44,7 +44,7 @@ export BRIDGE="$PWD"
 
 ### 2. Start agents and find pane IDs
 
-In dedicated tmux panes, start your own Codex, OpenCode or Claude Code sessions in the research repository. From a separate shell using the same OS user and tmux server:
+In a dedicated tmux pane, start your own Codex, OpenCode or Claude Code session in the research repository. Multiple agents are optional. From a separate shell using the same OS user and tmux server:
 
 ```bash
 cd /path/to/your/research-repo
@@ -53,10 +53,10 @@ tmux list-panes -a -F '#{pane_id} #{session_name} #{pane_current_command} #{pane
 
 ### 3. Register agents and launch the fork
 
-Replace `%1` and `%2` with the actual running agent pane IDs. One agent is sufficient; omit the second registration if unnecessary. Aliases are chosen locally.
+Only **one running agent** is required. Replace `%1` with its actual pane ID and choose any alias (here `agent`). No second agent or reviewer is required.
 
 ```bash
-REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" executor=%1 reviewer=%2)" &&
+REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" agent=%1)" &&
 export CODEXPRO_TMUX_AGENTS="$REGISTRY" &&
 export CODEXPRO_TMUX_ALLOW_SEND=1 &&
 node "$BRIDGE/scripts/codexpro.mjs" setup
@@ -82,12 +82,12 @@ CodexPro auth is the token already in that URL. Do not share the URL.
 
 ### Daily startup
 
-After opening the agent sessions, set the actual checkout path and pane IDs again in each new server-launch shell:
+After opening your agent session(s), set the actual checkout path and pane ID(s) again in each new server-launch shell:
 
 ```bash
 export BRIDGE="/absolute/path/to/codexpro_tmux"
 cd /path/to/your/research-repo
-REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" executor=%1 reviewer=%2)" &&
+REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" agent=%1)" &&
 export CODEXPRO_TMUX_AGENTS="$REGISTRY" &&
 export CODEXPRO_TMUX_ALLOW_SEND=1 &&
 node "$BRIDGE/scripts/codexpro.mjs" start
@@ -98,6 +98,17 @@ If connection fails, run `node "$BRIDGE/scripts/codexpro.mjs" doctor` or `node "
 ### Verify the bridge
 
 Ask ChatGPT to call `tmux_list_agents`, then `tmux_read_output` for an alias. If the terminal clearly shows an empty agent input prompt, try sending a harmless message using the fresh revision with `submit: true`. A successful call confirms terminal delivery, not agent acknowledgement. Inspect the real pane. See [the full bridge guide](TMUX_BRIDGE.md) for security, troubleshooting and limits.
+
+### Optional: register multiple agents
+
+The bridge accepts 1–16 agent aliases in the same registry. For example, to register two existing panes, stop the current bridge and replace the single-agent registration command with:
+
+```bash
+REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" executor=%1 reviewer=%2)" &&
+export CODEXPRO_TMUX_AGENTS="$REGISTRY"
+```
+
+Then launch the bridge as above. Use your actual pane IDs and distinct aliases. The same MCP tools work for one or multiple agents; no separate deployment or second agent is required.
 
 ## What ChatGPT can do
 

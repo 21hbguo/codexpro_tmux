@@ -54,7 +54,7 @@ export BRIDGE="$PWD"
 
 ### 2. 启动 Agent 并查询 pane ID
 
-在专用 tmux pane 中打开研究项目，启动 Codex、OpenCode 或 Claude Code 等交互式 Agent。使用同一个系统用户及 tmux server，在另一个终端中执行：
+在一个专用 tmux pane 中打开研究项目，启动 Codex、OpenCode 或 Claude Code 等交互式 Agent。需要时再增加其他 Agent。使用同一个系统用户及 tmux server，在另一个终端中执行：
 
 ```bash
 cd /path/to/your/research-repo
@@ -63,10 +63,10 @@ tmux list-panes -a -F '#{pane_id} #{session_name} #{pane_current_command} #{pane
 
 ### 3. 注册 Agent 并启动本 fork
 
-将 `%1`、`%2` 换成真实 pane ID；只用一个 Agent 时可以省略第二个注册项。别名可自定义。
+**只需要一个运行中的 Agent 即可使用。** 将 `%1` 换成真实 pane ID，`agent` 是可自定义的别名。不强制配置第二个 Agent 或 Reviewer。
 
 ```bash
-REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" executor=%1 reviewer=%2)" &&
+REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" agent=%1)" &&
 export CODEXPRO_TMUX_AGENTS="$REGISTRY" &&
 export CODEXPRO_TMUX_ALLOW_SEND=1 &&
 node "$BRIDGE/scripts/codexpro.mjs" setup
@@ -92,12 +92,12 @@ CodexPro 的认证就在这个 URL 里的 token。不要分享该 URL。
 
 ### 日常启动
 
-启动 Agent 后，在每个新的服务启动终端重新设置实际安装路径和 pane ID：
+启动一个或多个 Agent 后，在每个新的服务启动终端重新设置实际安装路径和 pane ID：
 
 ```bash
 export BRIDGE="/absolute/path/to/codexpro_tmux"
 cd /path/to/your/research-repo
-REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" executor=%1 reviewer=%2)" &&
+REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" agent=%1)" &&
 export CODEXPRO_TMUX_AGENTS="$REGISTRY" &&
 export CODEXPRO_TMUX_ALLOW_SEND=1 &&
 node "$BRIDGE/scripts/codexpro.mjs" start
@@ -110,6 +110,17 @@ node "$BRIDGE/scripts/codexpro.mjs" start
 先让 ChatGPT 调用 `tmux_list_agents` 查询别名，再调用 `tmux_read_output` 读取某个 Agent。确认终端显示空闲且空白的输入框后，使用返回的 revision 和 `submit: true` 发送一条无害测试消息，并在真实 pane 中确认是否收到。成功回执仅表示终端提交，不代表 Agent 已确认或完成任务。
 
 完整参数、安全边界与限制见 [TMUX_BRIDGE.md](TMUX_BRIDGE.md)。
+
+### 可选：注册多个 Agent
+
+同一个 bridge 支持注册 1–16 个 Agent。若需要两个或更多 Agent，停止当前 bridge，将前面的单 Agent 注册命令替换为：
+
+```bash
+REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" executor=%1 reviewer=%2)" &&
+export CODEXPRO_TMUX_AGENTS="$REGISTRY"
+```
+
+使用真实 pane ID 和不同别名，然后按前面的方式启动 bridge。单 Agent 与多 Agent 使用相同 MCP 工具，不需要分别部署，也不需要固定 Executor/Reviewer 角色。
 
 ## ChatGPT 能做什么
 

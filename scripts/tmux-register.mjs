@@ -2,7 +2,7 @@
 import { registerTmuxAgent } from "../dist/tmuxOps.js";
 
 try {
-  if (process.argv.length < 3 || process.argv.length > 18) throw Error("Usage: node scripts/tmux-register.mjs executor=%1 reviewer=%2 (run from the allowed workspace root, with agents already running)");
+  if (process.argv.length < 3 || process.argv.length > 18) throw Error("Usage: node scripts/tmux-register.mjs agent=%1 [reviewer=%2 ...] (run from the allowed workspace root, with registered agents already running)");
   const result = Object.create(null);
   const panes = new Set();
   for (const arg of process.argv.slice(2)) {

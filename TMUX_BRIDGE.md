@@ -14,13 +14,13 @@ npm run tmux:smoke
 export BRIDGE="$PWD"
 ~~~
 
-Start Codex/OpenCode/Claude Code in dedicated tmux panes, using the same OS account and tmux server as the bridge. Open the intended research repository in those panes. From a separate local shell:
+Start one or more Codex/OpenCode/Claude Code sessions in dedicated tmux panes, using the same OS account and tmux server as the bridge. Open the intended research repository in each pane. Only one agent is required. From a separate local shell:
 
 ~~~bash
 cd /path/to/your/research-repo
 tmux list-panes -a -F '#{pane_id} #{session_name} #{pane_current_command} #{pane_current_path}'
-# Replace %1 and %2 with your own pane IDs; both agents must already be running.
-REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" executor=%1 reviewer=%2)" &&
+# Replace %1 with the pane ID of your already-running agent.
+REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" agent=%1)" &&
 export CODEXPRO_TMUX_AGENTS="$REGISTRY" &&
 export CODEXPRO_TMUX_ALLOW_SEND=1 &&
 node "$BRIDGE/scripts/codexpro.mjs" setup
@@ -34,6 +34,17 @@ node "$BRIDGE/scripts/codexpro.mjs" start
 Use the server URL printed by this local fork; connect it using the [fork README instructions](README.md). Keep the authentication token private. If the existing plugin caches the tool list, refresh/reconnect it; the existing supertool can also use the new action names. Do not use the upstream globally installed binary by mistake.
 
 The registry is local-only configuration, not editable via MCP. An alias binds one exact pane ID, server PID, pane PID, foreground command reported by tmux, socket path, and canonical workspace root. Re-register after restarting tmux/agents, changing panes, or changing workspace. For a named tmux server, run registration from a shell within that server (or with the appropriate TMUX environment). Only selected workspace agents are visible.
+
+## Optional: multiple agents
+
+A single agent is the default deployment. To register multiple agents (up to 16), replace the registration command with:
+
+~~~bash
+REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" executor=%1 reviewer=%2)" &&
+export CODEXPRO_TMUX_AGENTS="$REGISTRY"
+~~~
+
+Restart the bridge after changing the registry. Aliases are arbitrary; no fixed roles are required.
 
 ## Troubleshooting
 
@@ -55,10 +66,10 @@ The registry is local-only configuration, not editable via MCP. An alias binds o
 | tmux_read_output | agent, workspace_id? | Returns bounded terminal text and a snapshot revision. |
 | tmux_send_message | agent, message, expected_revision, submit, workspace_id? | Pastes literal single-line text, optionally presses Enter, only if a fresh snapshot still matches. |
 
-Example: list agents, read executor, inspect that its prompt is ready and empty, then send:
+Example: list agents, read alias agent, inspect that its prompt is ready and empty, then send:
 
 ~~~json
-{"agent":"executor","message":"Review the latest experiment results and report the main findings.","expected_revision":"<64-character revision from tmux_read_output>","submit":true}
+{"agent":"agent","message":"Review the latest experiment results and report the main findings.","expected_revision":"<64-character revision from tmux_read_output>","submit":true}
 ~~~
 
 With submit=false, the text is pasted but Enter is not sent. The message must be single-line (up to 4000 characters); control characters and common secret patterns are rejected. A returned message_id is a delivery-attempt identifier, not an agent receipt. A successful call only means the terminal accepted the requested operations. Inspect before retrying; a timeout or race can leave text in the pane. Read output and check experiment records separately.
