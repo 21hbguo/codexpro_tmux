@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { realpathSync } from "node:fs";
 import path from "node:path";
-import { TmuxBridge, registerTmuxAgent, tmuxToolEnabled, authorizeTmuxWindow } from "../dist/tmuxOps.js";
+import { TmuxBridge, registerTmuxAgent, tmuxToolEnabled, authorizeTmuxWindow, tmuxOnlyMode } from "../dist/tmuxOps.js";
 
 const root = realpathSync(".");
 const socket = path.join(root, "fake-tmux.sock");
@@ -58,6 +58,7 @@ screen = "OPENAI_API_KEY=sk-realSecretValue123";
 assert(!bridge.read(root, "executor").output.includes("sk-realSecretValue123"));
 assert.throws(() => new TmuxBridge("{}", run), /Register/);
 assert.throws(() => new TmuxBridge(JSON.stringify({ a: JSON.parse(registry).executor, b: JSON.parse(registry).executor }), run), /Duplicate/);
+delete process.env.CODEXPRO_TMUX_ONLY;
 delete process.env.CODEXPRO_TMUX_AGENTS;
 delete process.env.CODEXPRO_TMUX_WINDOW;
 delete process.env.CODEXPRO_TMUX_ALLOW_SEND;
@@ -93,18 +94,20 @@ const windowRun = (s, args, input) => {
   if (args[0] === "capture-pane") return "Agent input >";
   return "";
 };
-const scope = JSON.stringify(authorizeTmuxWindow(root, "%0", windowRun));
+const scope = JSON.stringify(authorizeTmuxWindow("%0", windowRun));
 const windowBridge = new TmuxBridge("", windowRun, scope);
-assert.deepEqual(windowBridge.list(root).map(p => p.agent), ["%1"]);
-assert.deepEqual(windowBridge.list(path.dirname(root)), []);
-for (const bad of ["%0", "%2", "%3", "%4", "some:window", "%1;kill-server"]) {
+assert.deepEqual(windowBridge.list().map(p => p.agent), ["%1", "%4"]);
+assert.deepEqual(windowBridge.list(path.dirname(root)).map(p => p.agent), ["%1", "%4"]);
+for (const bad of ["%0", "%2", "%3", "some:window", "%1;kill-server"]) {
   assert.throws(() => windowBridge.read(root, bad));
 }
 assert(!windowCalls.some(c => c.args[0] === "capture-pane"));
 const first = windowBridge.read(root, "%1");
 assert.equal(windowBridge.send(root, "%1", "hello", first.revision, true).status, "submitted_to_terminal");
 panes.set("%5", ["100", "1005", "opencode", "0", "0", root, socket, "@1"]);
-assert.deepEqual(windowBridge.list(root).map(p => p.agent), ["%1", "%5"]);
+assert.deepEqual(windowBridge.list().map(p => p.agent), ["%1", "%4", "%5"]);
+const cross = windowBridge.read(undefined, "%4");
+assert.equal(windowBridge.send(undefined, "%4", "cross-directory test", cross.revision, true).status, "submitted_to_terminal");
 panes.get("%1")[1] = "2001";
 assert.throws(() => windowBridge.send(root, "%1", "stale", first.revision, true), /changed/i);
 panes.get("%1")[7] = "@2";
@@ -115,5 +118,32 @@ assert.throws(() => new TmuxBridge(registry, windowRun, scope), /Choose window m
 process.env.CODEXPRO_TMUX_WINDOW = scope;
 assert.equal(tmuxToolEnabled(config, "tmux_list_agents"), true);
 assert.equal(tmuxToolEnabled(config, "tmux_send_message"), true);
+process.env.CODEXPRO_TMUX_ONLY = "1";
+assert.equal(tmuxOnlyMode(), true);
+assert.equal(tmuxToolEnabled({ ...config, writeMode: "off" }, "tmux_send_message"), true);
+const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+const { createCodexProServer } = await import("../dist/server.js");
+const { loadConfig } = await import("../dist/config.js");
+async function checkSurface(allowSend, expected) {
+  process.env.CODEXPRO_TMUX_ALLOW_SEND = allowSend ? "1" : "0";
+  const mcp = createCodexProServer(loadConfig(["--root", root, "--write", "off", "--bash", "off", "--tool-mode", "full"]));
+  const client = new Client({ name: "tmux-test", version: "1.0.0" });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  try {
+    await mcp.connect(st);
+    await client.connect(ct);
+    const result = await client.listTools();
+    assert.deepEqual(result.tools.map(t => t.name).sort(), expected.sort());
+    for (const tool of result.tools) assert(!Object.hasOwn(tool.inputSchema.properties ?? {}, "workspace_id"));
+  } finally {
+    await client.close();
+    await mcp.close();
+  }
+}
+await checkSurface(true, ["tmux_list_agents", "tmux_read_output", "tmux_send_message"]);
+await checkSurface(false, ["tmux_list_agents", "tmux_read_output"]);
+delete process.env.CODEXPRO_TMUX_ONLY;
 delete process.env.CODEXPRO_TMUX_WINDOW;
+delete process.env.CODEXPRO_TMUX_ALLOW_SEND;
 console.log("tmux bridge mock smoke passed");

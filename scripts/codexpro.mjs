@@ -1897,7 +1897,7 @@ async function confirmLocalExecution(args, root, commandInfo) {
     throw new Error('Use --yes to execute a local handoff in non-interactive shells, or use --dry-run to preview.');
   }
   printBox('Confirm local execution', [
-    labelValue('Workspace', root),
+    labelValue(process.env.CODEXPRO_TMUX_ONLY === '1' ? 'Internal profile (no file access)' : 'Workspace', root),
     labelValue('Agent', commandInfo.agent),
     ...(commandInfo.model ? [labelValue('Model', commandInfo.model)] : []),
     labelValue('Command', executorCommandPreview(commandInfo)),
@@ -2158,7 +2158,7 @@ async function confirmWatchHandoff(args, root) {
     throw new Error('Use --yes to start watch-handoff in non-interactive shells.');
   }
   printBox('Confirm handoff watcher', [
-    labelValue('Workspace', root),
+    labelValue(process.env.CODEXPRO_TMUX_ONLY === '1' ? 'Internal profile (no file access)' : 'Workspace', root),
     labelValue('Agent', args.agent ?? 'opencode'),
     ...(args.model ? [labelValue('Model', args.model)] : []),
     'This starts a local-only watcher. Each new .ai-bridge/current-plan.md hash runs through the configured local agent.',
@@ -2200,7 +2200,7 @@ async function runWatchHandoff(argv) {
   }
 
   printBox('CodexPro watch-handoff', [
-    labelValue('Workspace', root),
+    labelValue(process.env.CODEXPRO_TMUX_ONLY === '1' ? 'Internal profile (no file access)' : 'Workspace', root),
     labelValue('Plan', path.relative(root, planPath)),
     labelValue('State', path.relative(root, statePath)),
     labelValue('Agent', args.agent ?? 'opencode'),
@@ -2660,7 +2660,7 @@ async function confirmLoopHandoff(args, root) {
     throw new Error('Use --yes to start loop-handoff in non-interactive shells, or use --dry-run to preview.');
   }
   printBox('Confirm handoff loop', [
-    labelValue('Workspace', root),
+    labelValue(process.env.CODEXPRO_TMUX_ONLY === '1' ? 'Internal profile (no file access)' : 'Workspace', root),
     labelValue('Agent', args.agent ?? 'opencode'),
     ...(args.model ? [labelValue('Model', args.model)] : []),
     labelValue('Max iters', args.maxIters ?? '3'),
@@ -2682,7 +2682,7 @@ async function confirmLoopContinuation(args, root, iteration, planPath) {
     throw new Error('--require-human-confirmation needs an interactive terminal before running follow-up plans.');
   }
   printBox('Confirm follow-up plan', [
-    labelValue('Workspace', root),
+    labelValue(process.env.CODEXPRO_TMUX_ONLY === '1' ? 'Internal profile (no file access)' : 'Workspace', root),
     labelValue('Iteration', String(iteration)),
     labelValue('Plan', path.relative(root, planPath)),
     'The reviewer wrote or kept a follow-up plan. Review it before continuing.'
@@ -2751,7 +2751,7 @@ async function runLoopHandoff(argv) {
   }
 
   printBox('CodexPro loop-handoff', [
-    labelValue('Workspace', root),
+    labelValue(process.env.CODEXPRO_TMUX_ONLY === '1' ? 'Internal profile (no file access)' : 'Workspace', root),
     labelValue('Plan', path.relative(root, paths.planPath)),
     labelValue('Agent', request.commandInfo.agent),
     ...(request.commandInfo.model ? [labelValue('Model', request.commandInfo.model)] : []),
@@ -3161,7 +3161,7 @@ async function runDoctor(argv) {
 
   console.log('');
   printBox('CodexPro doctor', [
-    labelValue('Workspace', root),
+    labelValue(process.env.CODEXPRO_TMUX_ONLY === '1' ? 'Internal profile (no file access)' : 'Workspace', root),
     labelValue('Mode', `${mode}  tools=${toolMode}  write=${write}  bash=${bash}`),
     labelValue('Tunnel', tunnel),
     ...(stableHostname ? [labelValue('Hostname', stableHostname)] : []),
@@ -3432,16 +3432,17 @@ async function runSetupWizard(argv) {
     throw new Error('codexpro setup needs an interactive terminal. Use codexpro start --root /path/to/repo for non-interactive scripts.');
   }
   const defaults = parseArgs(argv);
+  const tmuxOnly = process.env.CODEXPRO_TMUX_ONLY === "1";
   const defaultRoot = path.resolve(expandHome(defaults.root ?? process.env.CODEXPRO_ROOT ?? process.cwd()));
 
   printBox('CodexPro setup', [
-    'This wizard prepares a ChatGPT connector for the folder you choose.',
-    'Press Enter to accept defaults. Stable tunnel choices are saved per workspace under ~/.codexpro.'
+    tmuxOnly ? 'Configure a window-only tmux connector; no project selection is needed.' : 'This wizard prepares a ChatGPT connector for the folder you choose.',
+    tmuxOnly ? 'Tunnel settings are saved using the internal installation profile.' : 'Press Enter to accept defaults. Stable tunnel choices are saved per workspace under ~/.codexpro.'
   ]);
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    const rootInput = await ask(rl, 'Where is your project located?', defaultRoot);
+    const rootInput = tmuxOnly ? defaultRoot : await ask(rl, 'Where is your project located?', defaultRoot);
     const root = realDir(rootInput);
     const profile = defaults.noProfile ? {} : loadWorkspaceProfile(root);
     if (profile.profilePath) {
@@ -3463,7 +3464,7 @@ async function runSetupWizard(argv) {
     const defaultMode = normalizeSetupChoice(optionValue(defaults, profile, 'mode', ['CODEXPRO_MODE'], 'agent'), ['agent', 'handoff', 'pro'], 'agent');
 
     const port = normalizePort(await ask(rl, 'Which local port should CodexPro use?', defaultPort));
-    const modeAnswer = await ask(rl, 'Mode: agent, handoff, or pro?', defaultMode);
+    const modeAnswer = tmuxOnly ? 'agent' : await ask(rl, 'Mode: agent, handoff, or pro?', defaultMode);
     const mode = normalizeSetupChoice(modeAnswer, ['agent', 'handoff', 'pro'], defaultMode);
 
     printBox('Public URL', [
@@ -3567,7 +3568,7 @@ async function runSetupWizard(argv) {
     }
 
     const saveDefault = defaults.noSaveConfig ? 'no' : 'yes';
-    const saveAnswer = await ask(rl, 'Save this setup for future runs from this workspace?', saveDefault);
+    const saveAnswer = await ask(rl, tmuxOnly ? 'Save these tunnel settings for future tmux runs?' : 'Save this setup for future runs from this workspace?', saveDefault);
     const shouldSave = !['n', 'no'].includes(saveAnswer.trim().toLowerCase());
     if (shouldSave) {
       const allowedRoots = configuredProjectRoots(root, defaults, profile);
@@ -3601,7 +3602,7 @@ async function runSetupWizard(argv) {
     const shouldStart = !['n', 'no'].includes(startAnswer.trim().toLowerCase());
     console.log('');
     console.log(paint('bold', 'Command'));
-    console.log(`  ${commandPreview(args)}`);
+    console.log(tmuxOnly ? '  node /path/to/codexpro_tmux/scripts/tmux-start.mjs start' : `  ${commandPreview(args)}`);
     console.log('');
     if (!shouldStart) {
       console.log('Setup complete. Run the command above when you are ready.');
@@ -3616,7 +3617,7 @@ async function runSetupWizard(argv) {
 function printProfile(root, profile) {
   if (!profile.profilePath) {
     printBox('CodexPro settings', [
-      labelValue('Workspace', root),
+      labelValue(process.env.CODEXPRO_TMUX_ONLY === '1' ? 'Internal profile (no file access)' : 'Workspace', root),
       'No saved settings for this workspace.',
       'Run codexpro settings set or codexpro setup to save a tunnel preference.'
     ]);
@@ -3624,7 +3625,7 @@ function printProfile(root, profile) {
   }
   const safe = sanitizedProfile(profile);
   printBox('CodexPro settings', [
-    labelValue('Workspace', root),
+    labelValue(process.env.CODEXPRO_TMUX_ONLY === '1' ? 'Internal profile (no file access)' : 'Workspace', root),
     labelValue('Profile', profile.profilePath),
     labelValue('Tunnel', safe.tunnel ?? 'cloudflare'),
     ...(safe.hostname ? [labelValue('Hostname', safe.hostname)] : []),
@@ -4072,7 +4073,7 @@ async function main() {
 
   const root = realDir(args.root ?? process.env.CODEXPRO_ROOT ?? process.cwd());
   let profile = args.noProfile ? {} : loadWorkspaceProfile(root);
-  profile = await maybeConfigureFirstRun(root, args, profile);
+  if (process.env.CODEXPRO_TMUX_ONLY !== '1') profile = await maybeConfigureFirstRun(root, args, profile);
   const effectiveArgs = { ...profile, ...args };
   if (profile.profilePath && !args.noProfile) {
     statusLine('ok', `Using saved profile: ${profile.profilePath}`);
@@ -4180,7 +4181,7 @@ async function main() {
   await assertPortAvailable(host, port);
 
   printBox('CodexPro start', [
-    labelValue('Workspace', root),
+    labelValue(process.env.CODEXPRO_TMUX_ONLY === '1' ? 'Internal profile (no file access)' : 'Workspace', root),
     ...(allowRoots.length > 1 ? [labelValue('Projects', allowRoots.slice(1).join(', '))] : []),
     labelValue('Mode', `${mode}  tools=${toolMode}  write=${write}  bash=${bash}`),
     labelValue('Bash transcript', bashTranscript),

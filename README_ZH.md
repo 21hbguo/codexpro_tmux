@@ -52,29 +52,16 @@ export BRIDGE="$PWD"
 
 `npm run tmux:smoke` 会构建 TypeScript 并运行模拟测试。若失败请先排查，不要继续部署；模拟测试不等同于真实 Agent 联调。
 
-### 2. 启动 Agent 并查询 pane ID
+### 2. 启动 tmux-only 模式
 
-在一个专用 tmux pane 中打开研究项目，启动 Codex、OpenCode 或 Claude Code 等交互式 Agent。需要时再增加其他 Agent。在 **同一个 tmux Window** 中新开一个普通 Shell pane（不要在 Agent 输入框执行），使用同一个系统用户及 tmux server。如果是新 Shell，需要重新设置 `BRIDGE` 为本 fork 的实际安装路径：
+在专用 tmux Window 内启动一个或多个 Agent，再新建一个普通 Shell pane，在**任意目录**执行：
 
 ```bash
 export BRIDGE="/absolute/path/to/codexpro_tmux"
-cd /path/to/your/research-repo
-tmux list-panes -F '#{pane_id} #{pane_current_command} #{pane_current_path}'
-```
-
-默认只列出当前 Window 的 pane。若需要查询其他 Window，可使用 `tmux list-panes -t session:window`；当前 Session 全部 Window 使用 `tmux list-panes -s`；所有 Session 使用 `tmux list-panes -a`。这些命令仅改变本地查询范围，默认启动器仍只授权所在 Window。
-
-### 3. 启动 bridge（无需注册 Agent）
-
-在同一专用 Window 的普通 Shell pane 中，确认当前目录是研究项目目录，然后执行：
-
-```bash
 node "$BRIDGE/scripts/tmux-start.mjs" setup
 ```
 
-启动器会在本机授权该 Window 和项目中的候选 Agent pane，排除 bridge 自身 pane。默认允许发送；仅需查看时使用 `setup --read-only`。不要在这个 Window 中放置敏感或无关程序。不需要本地逐个注册 pane，也不需要设置别名。
-
-setup 输出的 MCP Server URL 含认证 token，不要公开。接下来连接 ChatGPT。
+无需选择 Workspace、无需注册 Agent。向导只配置端口、HTTPS 隧道和认证，安装目录仅作为内部配置索引，不授予文件访问权限。默认仅暴露三个 tmux 工具，使用 `setup --read-only` 可禁用发送。保护 MCP URL，专用 Window 内不要放无关或敏感程序。
 
 ## 在 ChatGPT 中连接
 
@@ -92,38 +79,19 @@ CodexPro 的认证就在这个 URL 里的 token。不要分享该 URL。
 
 ### 日常启动
 
-启动一个或多个 Agent 后，在同一个 Window 的普通 Shell pane 中设置实际安装路径：
+在目标 Window 的普通 Shell pane 中执行（任意目录）：
 
 ```bash
-export BRIDGE="/absolute/path/to/codexpro_tmux"
-cd /path/to/your/research-repo
 node "$BRIDGE/scripts/tmux-start.mjs" start
 ```
 
-连接失败时可以运行 `node "$BRIDGE/scripts/codexpro.mjs" doctor` 或 `node "$BRIDGE/scripts/codexpro.mjs" connection-test`。连接测试模式本身不暴露 tmux 工具。若 ChatGPT 缓存旧工具列表，请刷新或重新连接插件。
+新 Shell 中重新设置 BRIDGE 为安装路径。加 `--read-only` 可禁用发送。直接告诉 ChatGPT pane ID，例如 %1，或让它查询候选 Agent。也可以自行运行 `tmux list-panes`。同 Window 中不同工作目录的 Agent 均可通信，无需注册或重启。发送前先读取并确认空白的 Agent 输入框。
 
-### 验证是否成功
+### 可选：原版仓库模式
 
-先让 ChatGPT 调用 `tmux_list_agents` 查询 pane ID，再调用 `tmux_read_output` 读取某个 Agent。确认终端显示空闲且空白的输入框后，使用返回的 revision 和 `submit: true` 发送一条无害测试消息，并在真实 pane 中确认是否收到。成功回执仅表示终端提交，不代表 Agent 已确认或完成任务。
+原有 `scripts/codexpro.mjs` 保留为单独的高权限模式，继续使用 Workspace 和文件操作工具。仅需 tmux 通信时不要使用。详见 [TMUX_BRIDGE.md](TMUX_BRIDGE.md)。
 
-完整参数、安全边界与限制见 [TMUX_BRIDGE.md](TMUX_BRIDGE.md)。
-
-### 在 ChatGPT 中直接指定 pane
-
-告诉 ChatGPT “向 %1 发送一条消息”或“列出当前 Window 的 Agent”。一个或多个 Agent 都可以；同 Window 中新开的 Agent pane 无需重新注册。其他 Window 或项目中的 pane 不允许访问。候选 pane 不等于确认运行了 Agent，发送前应核对空闲输入框。
-
-### 可选：显式注册（更严格隔离或跨 Window）
-
-若只想授权个别 pane，或者确实需要跨 Window，可不用默认启动器，改用原有显式注册模式，例如：
-
-```bash
-REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" executor=%1 reviewer=%2)" &&
-CODEXPRO_TMUX_AGENTS="$REGISTRY" CODEXPRO_TMUX_WINDOW= CODEXPRO_TMUX_ALLOW_SEND=1 node "$BRIDGE/scripts/codexpro.mjs" start
-```
-
-使用真实 pane ID，也支持只注册一个 Agent。显式模式仍使用别名寻址。
-
-## ChatGPT 能做什么
+## 原版 CodexPro 功能（可选仓库模式）
 
 在 workspace write 模式（常规 agent 设置）下：
 
@@ -157,7 +125,7 @@ CodexPro 专注于一个清晰流程：把 ChatGPT 连接到明确允许的本�
 
 后续可靠性、代码导航和工作流改进见[路线图](ROADMAP.md)。
 
-## 多项目
+## 多项目（原版仓库模式）
 
 一个 CodexPro 进程可以允许多个仓库：
 
@@ -171,7 +139,7 @@ node "$BRIDGE/scripts/codexpro.mjs" start
 
 两个 ChatGPT 账号或需要硬隔离时，用不同端口和 Server URL 跑两个 CodexPro 进程。
 
-## 命令
+## 命令（原版仓库模式）
 
 ```bash
 node "$BRIDGE/scripts/codexpro.mjs" setup
@@ -245,7 +213,7 @@ npm ci
 npm run tmux:smoke
 ```
 
-重新执行日常启动步骤及 pane 注册。不要使用 `npm install -g codexpro@latest` 更新本 fork。
+重新执行日常启动步骤，无需注册 pane。不要使用 `npm install -g codexpro@latest` 更新本 fork。
 
 ## 文档
 

@@ -19,6 +19,7 @@ import {
 } from "./profileStore.js";
 import { redactSensitiveText, redactStructured } from "./redact.js";
 import { createCodexProServer } from "./server.js";
+import { tmuxOnlyMode } from "./tmuxOps.js";
 import { WorkspaceRegistry } from "./guard.js";
 import { redactConfigPaths } from "./pathLabels.js";
 import { CODEXPRO_VERSION } from "./version.js";
@@ -1446,7 +1447,7 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig();
-  if (config.requireHttpToken && !config.authToken) {
+  if ((config.requireHttpToken || tmuxOnlyMode()) && !config.authToken) {
     throw new Error(
       "CODEXPRO_HTTP_TOKEN is required for this HTTP binding. " +
         "Set CODEXPRO_HTTP_TOKEN, use `codexpro start` to generate one, " +
@@ -1675,6 +1676,14 @@ async function main(): Promise<void> {
 
   const pruneTimer = setInterval(pruneTransports, Math.min(config.httpSessionTtlMs, 60_000));
   pruneTimer.unref();
+
+  app.use((req, res, next) => {
+    if (!tmuxOnlyMode() || req.path === "/mcp") { next(); return; }
+    if (req.method === "GET" && ["/", "/setup", "/healthz"].includes(req.path)) {
+      res.json({ ok: true, name: "CodexPro TMUX", mode: "tmux-only", authEnabled: true }); return;
+    }
+    res.status(404).json({ error: "Unavailable in tmux-only mode" });
+  });
 
   app.get("/", (_req, res) => {
     res.type("html").send(onboardingPage(config));

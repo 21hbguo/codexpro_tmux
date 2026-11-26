@@ -15,16 +15,18 @@ const SHELL = /^(?:-)?(?:bash|sh|dash|zsh|fish|ksh|csh|tcsh|ash|nu|nushell|xonsh
 const FORMAT = ["#{pane_id}", "#{pid}", "#{pane_pid}", "#{pane_current_command}", "#{pane_dead}", "#{pane_in_mode}", "#{pane_current_path}", "#{socket_path}", "#{window_id}"].join("\t");
 type Runner = (socket: string | undefined, args: string[], input?: string) => string;
 type Pane = { pane: string; serverPid: string; panePid: string; command: string; dead: string; inMode: string; cwd: string; socket: string; window: string };
-type Binding = { pane: string; serverPid: string; panePid: string; command: string; socket: string; workspace: string; window?: string };
-type WindowScope = { anchor: string; serverPid: string; anchorPid: string; socket: string; window: string; workspace: string };
+type Binding = { pane: string; serverPid: string; panePid: string; command: string; socket: string; workspace?: string; window?: string };
+type WindowScope = { anchor: string; serverPid: string; anchorPid: string; socket: string; window: string };
 
 function fail(message: string): never {
   throw new CodexProError(message);
 }
 
+export function tmuxOnlyMode(): boolean { return process.env.CODEXPRO_TMUX_ONLY === "1"; }
+
 export function tmuxToolEnabled(config: CodexProConfig, name: string): boolean {
   if (config.connectionTest || (!process.env.CODEXPRO_TMUX_AGENTS?.trim() && !process.env.CODEXPRO_TMUX_WINDOW?.trim())) return false;
-  if (name === "tmux_send_message") return config.writeMode !== "off" && process.env.CODEXPRO_TMUX_ALLOW_SEND === "1";
+  if (name === "tmux_send_message") return (tmuxOnlyMode() || config.writeMode !== "off") && process.env.CODEXPRO_TMUX_ALLOW_SEND === "1";
   return name === "tmux_list_agents" || name === "tmux_read_output";
 }
 
@@ -50,8 +52,9 @@ function paneInfo(run: Runner, socket: string | undefined, id: string): Pane {
   return { pane, serverPid, panePid, command, dead, inMode, cwd, socket: actualSocket, window };
 }
 
-function requireAgent(pane: Pane, workspace: string): void {
+function requireAgent(pane: Pane, workspace?: string): void {
   if (pane.dead !== "0" || SHELL.test(path.basename(pane.command))) fail("Pane is dead or appears to be a shell; start the agent first.");
+  if (workspace === undefined) return;
   let cwd: string;
   try { cwd = realpathSync(pane.cwd); } catch { return fail("Pane working directory is unavailable."); }
   if (!isSubpath(cwd, workspace)) fail("Pane is outside its registered workspace.");
@@ -66,12 +69,11 @@ export function registerTmuxAgent(workspace: string, paneId: string, run: Runner
 }
 
 // Created by a local launcher before the public MCP server starts, never via MCP.
-export function authorizeTmuxWindow(workspace: string, anchor: string, run: Runner = runTmux): WindowScope {
+export function authorizeTmuxWindow(anchor: string, run: Runner = runTmux): WindowScope {
   if (!PANE.test(anchor)) fail("Start the bridge inside a tmux shell pane (TMUX_PANE is missing or invalid).");
-  const root = realpathSync(workspace);
   const p = paneInfo(run, undefined, anchor);
-  if (p.dead !== "0" || !isSubpath(realpathSync(p.cwd), root)) fail("Launch the bridge from the intended workspace inside tmux.");
-  return { anchor: p.pane, serverPid: p.serverPid, anchorPid: p.panePid, socket: p.socket, window: p.window, workspace: root };
+  if (p.dead !== "0") fail("Launcher pane is dead.");
+  return { anchor: p.pane, serverPid: p.serverPid, anchorPid: p.panePid, socket: p.socket, window: p.window };
 }
 
 function parseWindowScope(raw: string): WindowScope {
@@ -83,8 +85,7 @@ function parseWindowScope(raw: string): WindowScope {
       typeof s.serverPid !== "string" || !PID.test(s.serverPid) ||
       typeof s.anchorPid !== "string" || !PID.test(s.anchorPid) ||
       typeof s.window !== "string" || !WINDOW.test(s.window) ||
-      typeof s.socket !== "string" || !path.isAbsolute(s.socket) ||
-      typeof s.workspace !== "string" || !path.isAbsolute(s.workspace)) fail("Invalid local tmux window authorization.");
+      typeof s.socket !== "string" || !path.isAbsolute(s.socket)) fail("Invalid local tmux window authorization.");
   return s as WindowScope;
 }
 
@@ -123,6 +124,7 @@ export class TmuxBridge {
   }
 
   static fromEnvironment(): TmuxBridge {
+    if (tmuxOnlyMode() && (!process.env.CODEXPRO_TMUX_WINDOW?.trim() || process.env.CODEXPRO_TMUX_AGENTS?.trim())) fail("tmux-only mode requires a locally authorized window.");
     return new TmuxBridge(process.env.CODEXPRO_TMUX_AGENTS ?? "", runTmux, process.env.CODEXPRO_TMUX_WINDOW ?? "");
   }
 
@@ -132,19 +134,19 @@ export class TmuxBridge {
         p.window !== scope.window || p.dead !== "0") fail("Authorized tmux window changed; restart the local bridge.");
   }
 
-  private windowBinding(scope: WindowScope, workspace: string, agent: string): Binding {
-    if (workspace !== scope.workspace || !PANE.test(agent) || agent === scope.anchor) fail("Target is not an authorized agent pane for this workspace.");
+  private windowBinding(scope: WindowScope, agent: string): Binding {
+    if (!PANE.test(agent) || agent === scope.anchor) fail("Target is not an authorized agent pane in this window.");
     this.verifyWindow(scope);
     const p = paneInfo(this.run, scope.socket, agent);
     if (p.socket !== scope.socket || p.serverPid !== scope.serverPid || p.window !== scope.window) fail("Target pane is outside the authorized tmux window.");
-    requireAgent(p, scope.workspace);
-    return { pane: p.pane, serverPid: p.serverPid, panePid: p.panePid, command: p.command, socket: p.socket, workspace: scope.workspace, window: p.window };
+    requireAgent(p);
+    return { pane: p.pane, serverPid: p.serverPid, panePid: p.panePid, command: p.command, socket: p.socket, window: p.window };
   }
 
-  private binding(workspace: string, agent: string): Binding {
-    if (this.scope) return this.windowBinding(this.scope, workspace, agent);
+  private binding(workspace: string | undefined, agent: string): Binding {
+    if (this.scope) return this.windowBinding(this.scope, agent);
     const b = this.bindings.get(agent);
-    if (!b || b.workspace !== workspace) return fail("Agent is not registered for the selected workspace.");
+    if (!b || workspace === undefined || b.workspace !== workspace) return fail("Agent is not registered for the selected workspace.");
     return b;
   }
 
@@ -157,16 +159,15 @@ export class TmuxBridge {
     return p;
   }
 
-  list(workspace: string) {
+  list(workspace?: string) {
     if (this.scope) {
       const scope = this.scope;
-      if (workspace !== scope.workspace) return [];
       this.verifyWindow(scope);
       const ids = this.run(scope.socket, ["list-panes", "-t", scope.window, "-F", "#{pane_id}"]).split(/\r?\n/).filter(id => PANE.test(id) && id !== scope.anchor);
       if (ids.length > 64) fail("Too many panes in the authorized window; use a dedicated smaller window.");
       return ids.flatMap(agent => {
         try {
-          const b = this.windowBinding(scope, workspace, agent);
+          const b = this.windowBinding(scope, agent);
           const p = this.verify(b);
           return [{ agent, pane: p.pane, command: p.command, status: p.inMode === "0" ? "connected" : "copy_mode", activity: "unknown" }];
         } catch { return []; }
@@ -190,14 +191,14 @@ export class TmuxBridge {
     return { raw, revision, inMode: p.inMode };
   }
 
-  read(workspace: string, agent: string) {
+  read(workspace: string | undefined, agent: string) {
     const b = this.binding(workspace, agent);
     const s = this.snapshot(b);
     const clean = redactSensitiveText(s.raw);
     return { agent, pane: b.pane, revision: s.revision, output: clean.slice(-12000), truncated: clean.length > 12000, activity: "unknown" };
   }
 
-  send(workspace: string, agent: string, message: string, expectedRevision: string, submit: boolean) {
+  send(workspace: string | undefined, agent: string, message: string, expectedRevision: string, submit: boolean) {
     if (typeof message !== "string" || !message.trim() || message.length > 4000 ||
         /[\x00-\x1f\x7f-\x9f\u2028\u2029]/u.test(message)) fail("Use a nonempty single-line message (max 4000 characters), without control characters.");
     if (hasSecretValue(message)) fail("Message appears to contain a secret.");
