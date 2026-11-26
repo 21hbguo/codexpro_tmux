@@ -55,7 +55,8 @@ Use actual IDs and 1–16 distinct aliases.
 | Tool | Inputs | Behavior |
 | --- | --- | --- |
 | tmux_list_agents | none | Lists authorized candidate panes or registered agents and connectivity, not idle/busy state. |
-| tmux_read_output | agent | Returns bounded terminal text and a snapshot revision. |
+| tmux_read_output | agent, cursor? | Returns bounded terminal text and revision; optional cursor enables a patch. |
+| tmux_wait_for_change | agent, expected_revision, timeout_seconds?, cursor? | Waits for change or timeout (1–15 seconds). |
 | tmux_send_message | agent, message, expected_revision, submit | Pastes literal single-line text, optionally presses Enter, only if a fresh snapshot still matches. |
 
 Example: list agents, read pane %1, inspect that its prompt is ready and empty, then send:
@@ -65,6 +66,14 @@ Example: list agents, read pane %1, inspect that its prompt is ready and empty, 
 ~~~
 
 With submit=false, the text is pasted but Enter is not sent. The message must be single-line (up to 4000 characters); control characters and common secret patterns are rejected. A returned message_id is a delivery-attempt identifier, not an agent receipt. A successful call only means the terminal accepted the requested operations. Inspect before retrying; a timeout or race can leave text in the pane. Read output and check experiment records separately.
+
+## Incremental reads and finite waits (V0.2 preview)
+
+Use a full read first. Store its cursor and revision separately. Pass the cursor to a subsequent read or wait to reduce duplicated terminal history. Cursor entries expire after 10 minutes, are capped at 64 per MCP session, and contain only the bounded redacted view (12,000 characters). They are not persistent.
+
+The response delta_mode is full, reset, unchanged, or patch. For a patch, split the previous reconstructed output on LF, discard drop_prefix_lines lines, retain the first replace_from_line remaining lines, then append output split on LF if line_count exceeds the retained count. Join with LF. This reconstructs the bounded current view, including trailing empty lines. If the cursor is missing, expired, belongs to another target, or the TUI changes too much, the response may be a full reset. Never treat a patch as a complete terminal transcript or as newly generated text. Read without cursor before sending if the full prompt has not been verified.
+
+tmux_wait_for_change compares the raw revision to a prior revision. It polls at about 500 ms intervals, returns event changed or timeout, and accepts 1–15 seconds (default 10); slow tmux subprocesses can extend the elapsed time. Concurrent waits are capped at 8 per server process. An output change is not a completion event. An unchanged screen is not proof of idle. activity remains unknown; copy_mode reports tmux copy mode. No background task is created. Stop polling on authorization/identity failures.
 
 ## Safety and limitations
 

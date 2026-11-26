@@ -26,7 +26,7 @@
 
 ## 它是什么
 
-本项目基于 [rebel0789/codexpro](https://github.com/rebel0789/codexpro) 二次开发。tmux 功能目前位于 `feat/tmux-agent-bridge` 分支（PR #1），并未发布到 npm 或合并到本 fork 的 main。新增 `tmux_list_agents`、`tmux_read_output`、`tmux_send_message`，保留原版仓库工具。
+本项目基于 [rebel0789/codexpro](https://github.com/rebel0789/codexpro) 二次开发。tmux 功能目前位于 `feat/tmux-agent-bridge` 分支（PR #1），并未发布到 npm 或合并到本 fork 的 main。新增 `tmux_list_agents`、`tmux_read_output`、`tmux_send_message`、`tmux_wait_for_change`，保留原版仓库工具。
 
 CodexPro 是本地 MCP server。它连接**你的 ChatGPT 会话**、**你的机器**和**你允许的仓库**。
 
@@ -61,7 +61,7 @@ export BRIDGE="/absolute/path/to/codexpro_tmux"
 node "$BRIDGE/scripts/tmux-start.mjs" setup
 ```
 
-无需选择 Workspace、无需注册 Agent。向导只配置端口、HTTPS 隧道和认证，安装目录仅作为内部配置索引，不授予文件访问权限。默认仅暴露三个 tmux 工具，使用 `setup --read-only` 可禁用发送。保护 MCP URL，专用 Window 内不要放无关或敏感程序。
+无需选择 Workspace、无需注册 Agent。向导只配置端口、HTTPS 隧道和认证，安装目录仅作为内部配置索引，不授予文件访问权限。默认仅暴露四个 tmux 工具，使用 `setup --read-only` 可禁用发送。保护 MCP URL，专用 Window 内不要放无关或敏感程序。
 
 ## 在 ChatGPT 中连接
 
@@ -86,6 +86,8 @@ node "$BRIDGE/scripts/tmux-start.mjs" start
 ```
 
 新 Shell 中重新设置 BRIDGE 为安装路径。加 `--read-only` 可禁用发送。直接告诉 ChatGPT pane ID，例如 %1，或让它查询候选 Agent。也可以自行运行 `tmux list-panes`。同 Window 中不同工作目录的 Agent 均可通信，无需注册或重启。发送前先读取并确认空白的 Agent 输入框。
+
+读取支持 cursor 增量快照；新增有限等待工具检测终端输出变化，不将其误判为任务完成。详见 [TMUX_BRIDGE.md](TMUX_BRIDGE.md)。
 
 ### 可选：原版仓库模式
 

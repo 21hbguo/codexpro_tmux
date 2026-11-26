@@ -22,6 +22,9 @@ assert.throws(() => bridge.read(root, "%1"), /not registered/);
 assert.throws(() => bridge.read(path.dirname(root), "executor"), /not registered/);
 const r = bridge.read(root, "executor");
 assert.equal(r.output, screen);
+assert.equal(r.delta_mode, "full");
+assert.equal(bridge.read(root, "executor", r.cursor).delta_mode, "unchanged");
+assert.equal(bridge.read(root, "executor", "unknown").delta_mode, "reset");
 assert.throws(() => bridge.send(root, "executor", "bad\nline", r.revision, true), /single-line/);
 assert.throws(() => bridge.send(root, "executor", "\u001b[201~", r.revision, true), /single-line/);
 screen = "Changed";
@@ -54,6 +57,37 @@ panePid = "200";
 cwd = path.dirname(root);
 assert.throws(() => bridge.read(root, "executor"), /outside/);
 cwd = root;
+// Reconstruct patches exactly, including suffix deletion and trailing empty lines.
+function applyView(previous, next) {
+  if (next.delta_mode === "unchanged") return previous;
+  if (next.delta_mode !== "patch") return next.output;
+  const kept = previous.split("\n").slice(next.drop_prefix_lines, next.drop_prefix_lines + next.replace_from_line);
+  if (next.line_count > kept.length) kept.push(...next.output.split("\n"));
+  return kept.join("\n");
+}
+screen = "line 1\nline 2\nline 3\nold footer";
+const v1 = bridge.read(root, "executor");
+screen = "line 1\nline 2\nline 3\nnew footer\n";
+const v2 = bridge.read(root, "executor", v1.cursor);
+assert.equal(v2.delta_mode, "patch");
+assert.equal(applyView(v1.output, v2), screen);
+screen = "line 2\nline 3\nnew footer\n\nnext";
+const v3 = bridge.read(root, "executor", v2.cursor);
+assert.equal(applyView(screen === v2.output ? v2.output : applyView(v1.output, v2), v3), screen);
+screen = "line 2\nline 3";
+const v4 = bridge.read(root, "executor", v3.cursor);
+assert.equal(applyView(applyView(applyView(v1.output, v2), v3), v4), screen);
+screen = "entire screen replaced";
+assert.equal(bridge.read(root, "executor", v4.cursor).delta_mode, "reset");
+const w1 = bridge.read(root, "executor");
+setTimeout(() => { screen = "changed by timer"; }, 50);
+const w2 = await bridge.waitForChange(root, "executor", w1.revision, 2, w1.cursor);
+assert.equal(w2.event, "changed");
+assert.equal(w2.output, screen);
+const w3 = await bridge.waitForChange(root, "executor", w2.revision, 1, w2.cursor);
+assert.equal(w3.event, "timeout");
+assert.equal(w3.delta_mode, "unchanged");
+await assert.rejects(bridge.waitForChange(root, "executor", w3.revision, 16), /timeout/);
 screen = "OPENAI_API_KEY=sk-realSecretValue123";
 assert(!bridge.read(root, "executor").output.includes("sk-realSecretValue123"));
 assert.throws(() => new TmuxBridge("{}", run), /Register/);
@@ -107,6 +141,7 @@ assert.equal(windowBridge.send(root, "%1", "hello", first.revision, true).status
 panes.set("%5", ["100", "1005", "opencode", "0", "0", root, socket, "@1"]);
 assert.deepEqual(windowBridge.list().map(p => p.agent), ["%1", "%4", "%5"]);
 const cross = windowBridge.read(undefined, "%4");
+assert.equal(windowBridge.read(undefined, "%4", first.cursor).delta_mode, "reset");
 assert.equal(windowBridge.send(undefined, "%4", "cross-directory test", cross.revision, true).status, "submitted_to_terminal");
 panes.get("%1")[1] = "2001";
 assert.throws(() => windowBridge.send(root, "%1", "stale", first.revision, true), /changed/i);
@@ -141,8 +176,8 @@ async function checkSurface(allowSend, expected) {
     await mcp.close();
   }
 }
-await checkSurface(true, ["tmux_list_agents", "tmux_read_output", "tmux_send_message"]);
-await checkSurface(false, ["tmux_list_agents", "tmux_read_output"]);
+await checkSurface(true, ["tmux_list_agents", "tmux_read_output", "tmux_send_message", "tmux_wait_for_change"]);
+await checkSurface(false, ["tmux_list_agents", "tmux_read_output", "tmux_wait_for_change"]);
 delete process.env.CODEXPRO_TMUX_ONLY;
 delete process.env.CODEXPRO_TMUX_WINDOW;
 delete process.env.CODEXPRO_TMUX_ALLOW_SEND;

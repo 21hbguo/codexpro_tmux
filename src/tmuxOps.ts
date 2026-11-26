@@ -1,12 +1,18 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import type { CodexProConfig } from "./config.js";
 import { CodexProError, isSubpath } from "./guard.js";
 import { hasSecretValue, redactSensitiveText } from "./redact.js";
 
-export const TMUX_TOOLS = ["tmux_list_agents", "tmux_read_output", "tmux_send_message"] as const;
+export const TMUX_TOOLS = ["tmux_list_agents", "tmux_read_output", "tmux_send_message", "tmux_wait_for_change"] as const;
+const CACHE_LIMIT = 64;
+const CACHE_TTL_MS = 10 * 60 * 1000;
+const MAX_CAPTURE_CHARS = 12000;
+let activeWaits = 0;
+const MAX_ACTIVE_WAITS = 8;
 const ALIAS = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
 const PANE = /^%[0-9]+$/;
 const WINDOW = /^@[0-9]+$/;
@@ -17,6 +23,9 @@ type Runner = (socket: string | undefined, args: string[], input?: string) => st
 type Pane = { pane: string; serverPid: string; panePid: string; command: string; dead: string; inMode: string; cwd: string; socket: string; window: string };
 type Binding = { pane: string; serverPid: string; panePid: string; command: string; socket: string; workspace?: string; window?: string };
 type WindowScope = { anchor: string; serverPid: string; anchorPid: string; socket: string; window: string };
+type Snapshot = { raw: string; revision: string; inMode: string };
+type CachedView = { identity: string; output: string; revision: string; createdAt: number };
+
 
 function fail(message: string): never {
   throw new CodexProError(message);
@@ -27,7 +36,7 @@ export function tmuxOnlyMode(): boolean { return process.env.CODEXPRO_TMUX_ONLY 
 export function tmuxToolEnabled(config: CodexProConfig, name: string): boolean {
   if (config.connectionTest || (!process.env.CODEXPRO_TMUX_AGENTS?.trim() && !process.env.CODEXPRO_TMUX_WINDOW?.trim())) return false;
   if (name === "tmux_send_message") return (tmuxOnlyMode() || config.writeMode !== "off") && process.env.CODEXPRO_TMUX_ALLOW_SEND === "1";
-  return name === "tmux_list_agents" || name === "tmux_read_output";
+  return name === "tmux_list_agents" || name === "tmux_read_output" || name === "tmux_wait_for_change";
 }
 
 // No shell, no caller-controlled executable, arguments, socket or target selector.
@@ -117,6 +126,8 @@ function parseBindings(raw: string): Map<string, Binding> {
 export class TmuxBridge {
   private readonly bindings: Map<string, Binding>;
   private readonly scope?: WindowScope;
+  // Per MCP bridge/session; only bounded, redacted terminal views are retained.
+  private readonly views = new Map<string, CachedView>();
   constructor(registry: string, private readonly run: Runner = runTmux, windowAuthorization = "") {
     if (registry.trim() && windowAuthorization.trim()) fail("Choose window mode or explicit registry, not both.");
     this.scope = windowAuthorization.trim() ? parseWindowScope(windowAuthorization) : undefined;
@@ -183,7 +194,7 @@ export class TmuxBridge {
     });
   }
 
-  private snapshot(b: Binding) {
+  private snapshot(b: Binding): Snapshot {
     const p = this.verify(b);
     const raw = this.run(b.socket, ["capture-pane", "-p", "-t", b.pane, "-S", "-100"]);
     this.verify(b);
@@ -191,11 +202,89 @@ export class TmuxBridge {
     return { raw, revision, inMode: p.inMode };
   }
 
-  read(workspace: string | undefined, agent: string) {
-    const b = this.binding(workspace, agent);
-    const s = this.snapshot(b);
+  private view(b: Binding, agent: string, s: Snapshot, previousCursor?: string) {
+    const now = Date.now();
+    for (const [cursor, entry] of this.views) {
+      if (now - entry.createdAt > CACHE_TTL_MS) this.views.delete(cursor);
+    }
     const clean = redactSensitiveText(s.raw);
-    return { agent, pane: b.pane, revision: s.revision, output: clean.slice(-12000), truncated: clean.length > 12000, activity: "unknown" };
+    const full = clean.slice(-MAX_CAPTURE_CHARS);
+    const identity = JSON.stringify(b);
+    const previous = previousCursor ? this.views.get(previousCursor) : undefined;
+    let deltaMode: "full" | "reset" | "unchanged" | "patch" = previousCursor ? "reset" : "full";
+    let output = full;
+    let replaceFromLine: number | undefined;
+    let dropPrefixLines: number | undefined;
+    if (previous?.identity === identity) {
+      if (previous.output === full) {
+        deltaMode = "unchanged";
+        output = "";
+      } else {
+        const before = previous.output.split("\n");
+        const after = full.split("\n");
+        let prefix = 0;
+        while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix++;
+        // A TUI may rewrite old lines. A patch replaces a suffix, not necessarily new output.
+        // Exact prefix/suffix matching is used only to reconstruct the current view, never to infer completion.
+        let drop = 0;
+        let keep = prefix;
+        // Bounded work: search at most 256 offsets for scrollback shifts.
+        for (let offset = 1; offset <= Math.min(before.length - 1, 256); offset++) {
+          if (before[offset] !== after[0]) continue;
+          let overlap = 0;
+          while (offset + overlap < before.length && overlap < after.length && before[offset + overlap] === after[overlap]) overlap++;
+          if (overlap >= 3 && overlap > keep && offset + overlap === before.length) {
+            drop = offset;
+            keep = overlap;
+          }
+        }
+        if (keep > 0) {
+          const suffix = after.slice(keep).join("\n");
+          if (suffix.length < full.length) {
+            deltaMode = "patch";
+            output = suffix;
+            replaceFromLine = keep;
+            dropPrefixLines = drop;
+          }
+        }
+      }
+    }
+    const cursor = randomUUID();
+    this.views.set(cursor, { identity, output: full, revision: s.revision, createdAt: now });
+    while (this.views.size > CACHE_LIMIT) this.views.delete(this.views.keys().next().value!);
+    return {
+      agent, pane: b.pane, revision: s.revision, cursor,
+      delta_mode: deltaMode, base_cursor: deltaMode === "patch" || deltaMode === "unchanged" ? previousCursor : undefined,
+      drop_prefix_lines: dropPrefixLines, replace_from_line: replaceFromLine,
+      line_count: full.split("\n").length, output, truncated: clean.length > MAX_CAPTURE_CHARS,
+      activity: "unknown", copy_mode: s.inMode === "1"
+    };
+  }
+
+  read(workspace: string | undefined, agent: string, cursor?: string) {
+    const b = this.binding(workspace, agent);
+    return this.view(b, agent, this.snapshot(b), cursor);
+  }
+
+  async waitForChange(workspace: string | undefined, agent: string, expectedRevision: string, timeoutSeconds = 10, cursor?: string) {
+    if (!/^[a-f0-9]{64}$/.test(expectedRevision) ||
+        !Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 15) fail("A valid revision and timeout of 1–15 seconds are required.");
+    if (activeWaits >= MAX_ACTIVE_WAITS) fail("Too many active tmux waits; retry later.");
+    const b = this.binding(workspace, agent);
+    activeWaits++;
+    try {
+      const deadline = Date.now() + timeoutSeconds * 1000;
+      for (;;) {
+        const snapshot = this.snapshot(b);
+        const changed = snapshot.revision !== expectedRevision;
+        if (changed || Date.now() >= deadline) {
+          return { event: changed ? "changed" : "timeout", ...this.view(b, agent, snapshot, cursor) };
+        }
+        await sleep(Math.min(500, Math.max(1, deadline - Date.now())));
+      }
+    } finally {
+      activeWaits--;
+    }
   }
 
   send(workspace: string | undefined, agent: string, message: string, expectedRevision: string, submit: boolean) {

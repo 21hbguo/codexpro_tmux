@@ -16,7 +16,7 @@
 
 ## What it is
 
-This is an experimental fork of [rebel0789/codexpro](https://github.com/rebel0789/codexpro). The tmux bridge currently lives on `feat/tmux-agent-bridge` (PR #1), not upstream npm or this fork's main branch. It adds `tmux_list_agents`, `tmux_read_output`, and `tmux_send_message` while retaining the original repository tools. See [README in Chinese](README_ZH.md).
+This is an experimental fork of [rebel0789/codexpro](https://github.com/rebel0789/codexpro). The tmux bridge currently lives on `feat/tmux-agent-bridge` (PR #1), not upstream npm or this fork's main branch. It adds `tmux_list_agents`, `tmux_read_output`, `tmux_send_message`, and `tmux_wait_for_change` while retaining the original repository tools. See [README in Chinese](README_ZH.md).
 
 CodexPro is a local MCP server. It connects **your ChatGPT session** to **your machine** and **repos you allow**.
 
@@ -51,7 +51,7 @@ export BRIDGE="/absolute/path/to/codexpro_tmux"
 node "$BRIDGE/scripts/tmux-start.mjs" setup
 ```
 
-No workspace selection or agent registration. The wizard configures port, HTTPS tunnel and authentication, using the installation directory as an internal profile key only. By default only three tmux tools are exposed. Use `setup --read-only` to disable sending. Keep the MCP URL private and use a dedicated window without unrelated or sensitive programs.
+No workspace selection or agent registration. The wizard configures port, HTTPS tunnel and authentication, using the installation directory as an internal profile key only. By default only four tmux tools are exposed. Use `setup --read-only` to disable sending. Keep the MCP URL private and use a dedicated window without unrelated or sensitive programs.
 
 ## Connect in ChatGPT
 
@@ -76,6 +76,8 @@ node "$BRIDGE/scripts/tmux-start.mjs" start
 ```
 
 Set BRIDGE to the installation path in a new shell. Add `--read-only` to disable sending. Tell ChatGPT a pane ID (e.g. %1), or ask it to list candidates. No alias or workspace required. Optional local discovery: `tmux list-panes`. Agents can work in different directories. Read the target output and verify its empty agent prompt before sending.
+
+Incremental reads accept a cursor; bounded waits detect output changes, not agent completion. See [TMUX_BRIDGE.md](TMUX_BRIDGE.md).
 
 ### Optional original repository mode
 
