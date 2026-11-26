@@ -4,7 +4,6 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { privateDirectory } from "./tmux-credentials.mjs";
 
 const branch = "feat/tmux-agent-bridge";
@@ -28,7 +27,9 @@ try {
     try {
       run("git", ["clone", "--single-branch", "--branch", branch, repo, staging], root, env);
       run("npm", ["ci"], staging, env);
-      run("npm", ["run", "tmux:smoke"], staging, env);
+      const testHome = fs.mkdtempSync(path.join(root, "test-home-"));
+      try { run("npm", ["run", "tmux:smoke"], staging, { ...env, HOME: testHome, XDG_CONFIG_HOME: path.join(testHome, ".config") }); }
+      finally { fs.rmSync(testHome, { recursive: true, force: true }); }
       console.log("Staged and tested:", staging);
       console.log("Live service, token and tunnel unchanged. Do not activate until independent validation. This command does not install or restart the staged release.");
     } catch (error) {

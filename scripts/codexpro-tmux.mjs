@@ -221,6 +221,19 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
   if (active && (previous.cwd !== cwd || previous.window !== scope.window || (previous.socket && previous.socket !== scope.socket) || (previous.serverPid && previous.serverPid !== scope.serverPid))) {
     throw new Error("Existing instance belongs to another tmux window; stop it locally before starting here.");
   }
+  // Verify an explicitly supplied migration token against the live local service before saving it.
+  if (active && !rotateToken && process.env.CODEXPRO_HTTP_TOKEN?.trim()) {
+    if (!Number.isInteger(previous.port) || previous.port < 1024 || previous.port > 65535) throw new Error("Invalid existing instance port.");
+    let health;
+    try {
+      const response = await fetch("http://127.0.0.1:" + previous.port + "/healthz", {
+        headers: { Authorization: "Bearer " + process.env.CODEXPRO_HTTP_TOKEN.trim() },
+        redirect: "error", signal: AbortSignal.timeout(2000)
+      });
+      if (response.ok) health = await response.json();
+    } catch {}
+    if (health?.mode !== "tmux-only" || health?.authEnabled !== true) throw new Error("Existing token could not be verified against the local bridge; no restart was performed.");
+  }
   // Never change a legacy live token silently. Import it before stopping the old launcher.
   const token = persistentToken(CREDENTIAL_DIR, instanceKey(cwd), { initialToken: process.env.CODEXPRO_HTTP_TOKEN?.trim(), rotate: rotateToken, legacyRunning: active });
   await replaceExistingCwdInstance(cwd, scope);
