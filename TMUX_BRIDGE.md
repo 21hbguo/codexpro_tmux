@@ -14,17 +14,20 @@ npm run tmux:smoke
 export BRIDGE="$PWD"
 ~~~
 
-Start one or more Codex/OpenCode/Claude Code sessions in dedicated tmux panes, using the same OS account and tmux server as the bridge. Open the intended research repository in each pane. Only one agent is required. From a separate local shell:
+Start one or more Codex/OpenCode/Claude Code sessions in dedicated tmux panes, using the same OS account and tmux server as the bridge. Open the intended research repository in each pane. Only one agent is required. From a separate shell pane in the **same tmux window** as the agent (not the agent's own input prompt), set the actual checkout path again:
 
 ~~~bash
+export BRIDGE="/absolute/path/to/codexpro_tmux"
 cd /path/to/your/research-repo
-tmux list-panes -a -F '#{pane_id} #{session_name} #{pane_current_command} #{pane_current_path}'
+tmux list-panes -F '#{pane_id} #{pane_current_command} #{pane_current_path}'
 # Replace %1 with the pane ID of your already-running agent.
 REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" agent=%1)" &&
 export CODEXPRO_TMUX_AGENTS="$REGISTRY" &&
 export CODEXPRO_TMUX_ALLOW_SEND=1 &&
 node "$BRIDGE/scripts/codexpro.mjs" setup
 ~~~
+
+The default discovery command lists the current window only. To discover panes in another window, use `tmux list-panes -t session:window`; use `-s` for the current session or `-a` for all sessions when needed. Explicit registration is still required.
 
 For later launches, run the same registration/export commands before:
 ~~~bash

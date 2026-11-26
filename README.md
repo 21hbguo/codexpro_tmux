@@ -44,12 +44,15 @@ export BRIDGE="$PWD"
 
 ### 2. Start agents and find pane IDs
 
-In a dedicated tmux pane, start your own Codex, OpenCode or Claude Code session in the research repository. Multiple agents are optional. From a separate shell using the same OS user and tmux server:
+In a dedicated tmux pane, start your own Codex, OpenCode or Claude Code session in the research repository. Multiple agents are optional. Open a separate shell pane **in the same tmux window** as the agent, using the same OS user and tmux server. If this is a new shell, set `BRIDGE` to the absolute path of the fork checkout again:
 
 ```bash
+export BRIDGE="/absolute/path/to/codexpro_tmux"
 cd /path/to/your/research-repo
-tmux list-panes -a -F '#{pane_id} #{session_name} #{pane_current_command} #{pane_current_path}'
+tmux list-panes -F '#{pane_id} #{pane_current_command} #{pane_current_path}'
 ```
+
+By default, `tmux list-panes` lists only the current window. For another window use `tmux list-panes -t session:window`; for all windows in the current session use `tmux list-panes -s`; for all sessions use `tmux list-panes -a`. These options change discovery only, not the bridge's registration permissions.
 
 ### 3. Register agents and launch the fork
 

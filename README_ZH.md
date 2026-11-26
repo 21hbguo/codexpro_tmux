@@ -54,12 +54,15 @@ export BRIDGE="$PWD"
 
 ### 2. 启动 Agent 并查询 pane ID
 
-在一个专用 tmux pane 中打开研究项目，启动 Codex、OpenCode 或 Claude Code 等交互式 Agent。需要时再增加其他 Agent。使用同一个系统用户及 tmux server，在另一个终端中执行：
+在一个专用 tmux pane 中打开研究项目，启动 Codex、OpenCode 或 Claude Code 等交互式 Agent。需要时再增加其他 Agent。在 **同一个 tmux Window** 中新开一个普通 Shell pane（不要在 Agent 输入框执行），使用同一个系统用户及 tmux server。如果是新 Shell，需要重新设置 `BRIDGE` 为本 fork 的实际安装路径：
 
 ```bash
+export BRIDGE="/absolute/path/to/codexpro_tmux"
 cd /path/to/your/research-repo
-tmux list-panes -a -F '#{pane_id} #{session_name} #{pane_current_command} #{pane_current_path}'
+tmux list-panes -F '#{pane_id} #{pane_current_command} #{pane_current_path}'
 ```
+
+默认只列出当前 Window 的 pane。若需要查询其他 Window，可使用 `tmux list-panes -t session:window`；当前 Session 全部 Window 使用 `tmux list-panes -s`；所有 Session 使用 `tmux list-panes -a`。这些命令仅改变查询范围，不改变 bridge 的注册权限。
 
 ### 3. 注册 Agent 并启动本 fork
 
