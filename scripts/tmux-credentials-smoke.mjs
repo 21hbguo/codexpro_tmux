@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { persistentToken } from "./tmux-credentials.mjs";
 import { readExternalEndpoint, externalServerUrl } from "./tmux-endpoint.mjs";
+import { instanceLock, writePrivateJson, readPrivateJson } from "./tmux-lifecycle.mjs";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codexpro-token-test-"));
 const key = "0123456789abcdef";
@@ -41,5 +42,17 @@ try {
   fs.writeFileSync(endpointFile, JSON.stringify(config));
   fs.chmodSync(endpointFile, 0o644);
   assert.throws(() => readExternalEndpoint(endpointFile, dir), /private regular file/);
-  console.log("tmux credential and endpoint smoke passed");
+  fs.chmodSync(endpointFile, 0o600);
+  fs.writeFileSync(endpointFile, JSON.stringify({ ...config, cwd: path.join(dir, "deleted") }));
+  assert.equal(readExternalEndpoint(endpointFile, dir).selected, false);
+  assert.equal(readExternalEndpoint(endpointFile, dir).port, config.port);
+  const unlock = instanceLock(dir, key);
+  assert.throws(() => instanceLock(dir, key), /locked/);
+  unlock(); unlock();
+  instanceLock(dir, key)();
+  const metadata = path.join(dir, "meta.json");
+  writePrivateJson(metadata, { commit: "example" });
+  assert.deepEqual(readPrivateJson(metadata), { commit: "example" });
+  assert.equal(fs.statSync(metadata).mode & 0o777, 0o600);
+  console.log("tmux credential, endpoint and lifecycle smoke passed");
 } finally { fs.rmSync(dir, { recursive: true, force: true }); }

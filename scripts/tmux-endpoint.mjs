@@ -25,7 +25,12 @@ export function readExternalEndpoint(file, cwd) {
       Object.keys(config).some(k => !["cwd", "hostname", "port"].includes(k))) {
     throw new Error("Invalid external endpoint configuration (expected cwd, hostname, port).");
   }
-  if (fs.realpathSync(config.cwd) !== config.cwd) throw new Error("External endpoint cwd must be a canonical local directory.");
+  try {
+    if (fs.realpathSync(config.cwd) !== config.cwd) throw new Error("External endpoint cwd must be a canonical local directory.");
+  } catch (error) {
+    // Keep the port reserved even if its configured directory has disappeared.
+    if (error.code !== "ENOENT" || config.cwd === cwd) throw error;
+  }
   return { ...config, selected: config.cwd === cwd };
 }
 export function externalServerUrl(endpoint, token) {

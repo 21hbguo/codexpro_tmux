@@ -3,6 +3,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { persistentToken, privateDirectory } from "./tmux-credentials.mjs";
 import { readExternalEndpoint, externalServerUrl } from "./tmux-endpoint.mjs";
+import { instanceLock, controlPath, writePrivateJson } from "./tmux-lifecycle.mjs";
+import { selectedRelease, superviseExternal } from "./tmux-supervisor.mjs";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -15,6 +17,7 @@ const STATE_DIR = path.join(os.homedir(), ".codexpro", "tmux-instances");
 const DEFAULT_BASE_PORT = 8788;
 const CREDENTIAL_DIR = path.join(os.homedir(), ".codexpro", "tmux-credentials");
 const ENDPOINT_FILE = path.join(os.homedir(), ".codexpro", "tmux-endpoint.json");
+const RELEASE_DIR = path.join(os.homedir(), ".codexpro", "tmux-releases");
 
 function usage(commandName) {
   console.log(`Usage: ${commandName} [--read-only] [--local] [--port <port>]
@@ -226,11 +229,17 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
   if (external && explicitPort && opts.preferredPort !== external.port) throw new Error("Configured external endpoint requires its fixed port.");
   if (!external && explicitPort && endpoint && opts.preferredPort === endpoint.port) throw new Error("Port is reserved for the configured external endpoint.");
   privateDirectory(STATE_DIR);
+  const key = instanceKey(cwd);
+  const releaseStartup = instanceLock(STATE_DIR, key);
+  try {
   const previous = previousState(cwd);
   const active = Boolean(previous && (isPidAlive(previous.pid) || isPidAlive(previous.childPid)));
   if (active && (previous.cwd !== cwd || previous.window !== scope.window || (previous.socket && previous.socket !== scope.socket) || (previous.serverPid && previous.serverPid !== scope.serverPid))) {
     throw new Error("Existing instance belongs to another tmux window; stop it locally before starting here.");
   }
+  const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+  const backendRoot = external ? selectedRelease(STATE_DIR, key, RELEASE_DIR, fs.realpathSync(repoRoot)) : repoRoot;
+  if (external) controlPath(STATE_DIR, key);
   // Check a new fixed port before replacing a running instance; never auto-increment a routed port.
   if (external && !(active && previous.port === external.port) && !await isPortFree(external.port)) throw new Error("External endpoint port is occupied; existing instance unchanged.");
   // Verify an explicitly supplied migration token against the live local service before saving it.
@@ -253,7 +262,6 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
   const port = external ? external.port : await findFreePort(preferred, endpoint?.port);
   if (external && !await isPortFree(port)) throw new Error("Fixed external endpoint port is occupied; refusing alternate port.");
 
-  const repoRoot = fileURLToPath(new URL("..", import.meta.url));
   const codexproEntry = fileURLToPath(new URL("./codexpro.mjs", import.meta.url));
   const childArgs = [
     codexproEntry,
@@ -290,6 +298,20 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
 
   console.error(`CodexPro TMUX: authorizing window ${scope.window} (anchor ${scope.anchor}, cwd ${cwd}, port ${port})`);
 
+  const statePath = stateFileForCwd(cwd);
+  const removeOwnState = () => {
+    try {
+      const current = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      if (current?.pid === process.pid) fs.rmSync(statePath, { force: true });
+    } catch {}
+  };
+  if (external) {
+    await superviseExternal({ root: backendRoot, port, token, env, stateDir: STATE_DIR, key, releaseDir: RELEASE_DIR, releaseStartup,
+      onState: (childPid, release) => writePrivateJson(statePath, { pid: process.pid, childPid, cwd, window: scope.window, socket: scope.socket, serverPid: scope.serverPid, anchor: scope.anchor, port, external: true, release, supervisor: true }),
+      onReady: () => printSummary({ scope, port, serverUrl: externalServerUrl(external, token), readOnly: opts.readOnly, rotateToken, external }),
+      onExit: removeOwnState });
+    return;
+  }
   const child = spawn(process.execPath, childArgs, {
     cwd: repoRoot,
     env,
@@ -297,7 +319,6 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
   });
 
   fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
-  const statePath = stateFileForCwd(cwd);
   fs.writeFileSync(
     statePath,
     JSON.stringify({
@@ -315,13 +336,6 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
     { mode: 0o600 }
   );
 
-  const removeOwnState = () => {
-    try {
-      const current = JSON.parse(fs.readFileSync(statePath, "utf8"));
-      if (current?.pid === process.pid) fs.rmSync(statePath, { force: true });
-    } catch {}
-  };
-
   let stopping = false;
   const shutdown = (signal, exitCode) => {
     if (stopping) return;
@@ -333,6 +347,7 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
     setTimeout(() => {
       try { child.kill("SIGKILL"); } catch {}
       removeOwnState();
+      releaseStartup();
       process.exit(exitCode);
     }, 3000).unref();
   };
@@ -353,6 +368,7 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
         printedSummary = true;
         const serverUrl = external ? externalServerUrl(external, token) : line.slice("CODEXPRO_READY ".length).trim();
         printSummary({ scope, port, serverUrl, readOnly: opts.readOnly, rotateToken, external });
+        releaseStartup();
       } else {
         console.log(line);
       }
@@ -373,6 +389,7 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
       resolve();
     });
   });
+  } finally { releaseStartup(); }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
