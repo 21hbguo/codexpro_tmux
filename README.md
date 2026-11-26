@@ -52,22 +52,19 @@ cd /path/to/your/research-repo
 tmux list-panes -F '#{pane_id} #{pane_current_command} #{pane_current_path}'
 ```
 
-By default, `tmux list-panes` lists only the current window. For another window use `tmux list-panes -t session:window`; for all windows in the current session use `tmux list-panes -s`; for all sessions use `tmux list-panes -a`. These options change discovery only, not the bridge's registration permissions.
+By default, `tmux list-panes` lists only the current window. For another window use `tmux list-panes -t session:window`; for all windows in the current session use `tmux list-panes -s`; for all sessions use `tmux list-panes -a`. These options change local discovery only. The default bridge launcher still authorizes only its own window.
 
-### 3. Register agents and launch the fork
+### 3. Start the bridge (no per-agent registration)
 
-Only **one running agent** is required. Replace `%1` with its actual pane ID and choose any alias (here `agent`). No second agent or reviewer is required.
+From the separate shell pane in the same dedicated window, with the research repo as your current directory:
 
 ```bash
-REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" agent=%1)" &&
-export CODEXPRO_TMUX_AGENTS="$REGISTRY" &&
-export CODEXPRO_TMUX_ALLOW_SEND=1 &&
-node "$BRIDGE/scripts/codexpro.mjs" setup
+node "$BRIDGE/scripts/tmux-start.mjs" setup
 ```
 
-For read-only tmux access, omit/unset `CODEXPRO_TMUX_ALLOW_SEND` before starting the server. The server must not be in write-off mode to expose sending.
+This locally authorizes candidate agent panes in that exact tmux window and workspace, excluding the bridge's own pane. The launcher enables sending by default; use `setup --read-only` to disable it. Do not include sensitive or unrelated applications in this window. No aliases or pane IDs need to be configured locally.
 
-The setup command prints the MCP server URL. Keep its token private and proceed to the next section.
+The setup command prints the MCP server URL. Keep its token private and connect ChatGPT below.
 
 ## Connect in ChatGPT
 
@@ -85,33 +82,34 @@ CodexPro auth is the token already in that URL. Do not share the URL.
 
 ### Daily startup
 
-After opening your agent session(s), set the actual checkout path and pane ID(s) again in each new server-launch shell:
+After opening your agent session(s), set the actual checkout path in a shell pane in the same window:
 
 ```bash
 export BRIDGE="/absolute/path/to/codexpro_tmux"
 cd /path/to/your/research-repo
-REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" agent=%1)" &&
-export CODEXPRO_TMUX_AGENTS="$REGISTRY" &&
-export CODEXPRO_TMUX_ALLOW_SEND=1 &&
-node "$BRIDGE/scripts/codexpro.mjs" start
+node "$BRIDGE/scripts/tmux-start.mjs" start
 ```
 
 If connection fails, run `node "$BRIDGE/scripts/codexpro.mjs" doctor` or `node "$BRIDGE/scripts/codexpro.mjs" connection-test`. Refresh/reconnect the ChatGPT plugin when its tool list is cached. The connection-test mode itself does not expose tmux tools.
 
 ### Verify the bridge
 
-Ask ChatGPT to call `tmux_list_agents`, then `tmux_read_output` for an alias. If the terminal clearly shows an empty agent input prompt, try sending a harmless message using the fresh revision with `submit: true`. A successful call confirms terminal delivery, not agent acknowledgement. Inspect the real pane. See [the full bridge guide](TMUX_BRIDGE.md) for security, troubleshooting and limits.
+Ask ChatGPT to call `tmux_list_agents`, then `tmux_read_output` for a pane ID such as `%1`. If the terminal clearly shows an empty agent input prompt, try sending a harmless message using the fresh revision with `submit: true`. A successful call confirms terminal delivery, not agent acknowledgement. Inspect the real pane. See [the full bridge guide](TMUX_BRIDGE.md) for security, troubleshooting and limits.
 
-### Optional: register multiple agents
+### Select a pane directly in ChatGPT
 
-The bridge accepts 1–16 agent aliases in the same registry. For example, to register two existing panes, stop the current bridge and replace the single-agent registration command with:
+Say “send a message to pane %1” or “list the current window's agents”. The same window supports one or several agents, including newly opened agent panes; no second agent, alias or manual registration is required. Panes outside the authorized window/workspace are denied. A candidate is not proof of a running agent; inspect the prompt before sending.
+
+### Optional: explicit registry (stricter, or cross-window)
+
+Instead of `tmux-start.mjs`, use the original local registration mode if you want to expose only individual panes or intentionally use other windows. Example:
 
 ```bash
 REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" executor=%1 reviewer=%2)" &&
-export CODEXPRO_TMUX_AGENTS="$REGISTRY"
+CODEXPRO_TMUX_AGENTS="$REGISTRY" CODEXPRO_TMUX_WINDOW= CODEXPRO_TMUX_ALLOW_SEND=1 node "$BRIDGE/scripts/codexpro.mjs" start
 ```
 
-Then launch the bridge as above. Use your actual pane IDs and distinct aliases. The same MCP tools work for one or multiple agents; no separate deployment or second agent is required.
+Use the real pane IDs; a single alias is also supported. This mode uses aliases, not direct pane IDs.
 
 ## What ChatGPT can do
 
