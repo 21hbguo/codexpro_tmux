@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { persistentToken } from "./tmux-credentials.mjs";
+import { readExternalEndpoint, externalServerUrl } from "./tmux-endpoint.mjs";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codexpro-token-test-"));
 const key = "0123456789abcdef";
@@ -24,5 +25,21 @@ try {
   fs.unlinkSync(file);
   fs.symlinkSync(path.join(dir, "fedcba9876543210.token"), file);
   assert.throws(() => persistentToken(dir, key));
-  console.log("tmux credential smoke passed");
+  const endpointFile = path.join(dir, "endpoint.json");
+  assert.equal(readExternalEndpoint(endpointFile, dir), undefined);
+  const config = { cwd: fs.realpathSync(dir), hostname: "bridge.example.com", port: 18790 };
+  fs.writeFileSync(endpointFile, JSON.stringify(config), { mode: 0o600 });
+  const selected = readExternalEndpoint(endpointFile, config.cwd);
+  assert.equal(selected.selected, true);
+  assert.equal(readExternalEndpoint(endpointFile, path.dirname(config.cwd)).selected, false);
+  assert.equal(new URL(externalServerUrl(selected, imported)).searchParams.get("codexpro_token"), imported);
+  assert.equal(new URL(externalServerUrl(selected, imported)).hostname, config.hostname);
+  fs.writeFileSync(endpointFile, JSON.stringify({ ...config, hostname: "evil.example/path" }));
+  assert.throws(() => readExternalEndpoint(endpointFile, dir), /Invalid external endpoint/);
+  fs.writeFileSync(endpointFile, JSON.stringify({ ...config, port: 80 }));
+  assert.throws(() => readExternalEndpoint(endpointFile, dir), /Invalid external endpoint/);
+  fs.writeFileSync(endpointFile, JSON.stringify(config));
+  fs.chmodSync(endpointFile, 0o644);
+  assert.throws(() => readExternalEndpoint(endpointFile, dir), /private regular file/);
+  console.log("tmux credential and endpoint smoke passed");
 } finally { fs.rmSync(dir, { recursive: true, force: true }); }

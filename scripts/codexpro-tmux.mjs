@@ -2,6 +2,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { persistentToken, privateDirectory } from "./tmux-credentials.mjs";
+import { readExternalEndpoint, externalServerUrl } from "./tmux-endpoint.mjs";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -13,6 +14,7 @@ const SHELL_RE = /^(?:-)?(?:bash|sh|dash|zsh|fish|ksh|csh|tcsh|ash|nu|nushell|xo
 const STATE_DIR = path.join(os.homedir(), ".codexpro", "tmux-instances");
 const DEFAULT_BASE_PORT = 8788;
 const CREDENTIAL_DIR = path.join(os.homedir(), ".codexpro", "tmux-credentials");
+const ENDPOINT_FILE = path.join(os.homedir(), ".codexpro", "tmux-endpoint.json");
 
 function usage(commandName) {
   console.log(`Usage: ${commandName} [--read-only] [--local] [--port <port>]
@@ -21,11 +23,12 @@ Run in a shell pane inside the target tmux window (foreground keepalive).
 - Authorizes the current tmux window (excluding this launcher pane)
 - Replaces an existing instance for the same directory and window only
 - Reuses its persistent local token (explicit rotate command changes it)
-- Prints the window's panes and the MCP Server URL (Cloudflare Quick Tunnel by default)
+- Prints the window's panes and the MCP Server URL (externally managed tunnel when configured)
+- The configured external endpoint has a fixed port and is never managed by this launcher
 
 Options:
   --read-only     Disable tmux_send_message (read-only mode)
-  --local         Use local HTTP only (--tunnel none) instead of Cloudflare Quick Tunnel
+  --local         Use local HTTP only (--tunnel none); not allowed for an externally routed instance
   --port <port>   Preferred starting local port (default: ${DEFAULT_BASE_PORT})
   -h, --help      Show this help`);
 }
@@ -137,9 +140,9 @@ function isPortFree(port, host = "127.0.0.1") {
   });
 }
 
-async function findFreePort(startPort) {
+async function findFreePort(startPort, reservedPort) {
   for (let port = startPort; port <= 65535; port += 1) {
-    if (await isPortFree(port)) return port;
+    if (port !== reservedPort && await isPortFree(port)) return port;
   }
   throw new Error(`No free local port found starting from ${startPort}.`);
 }
@@ -183,7 +186,7 @@ function listWindowPanes(scope) {
     });
 }
 
-function printSummary({ scope, port, serverUrl, readOnly, rotateToken }) {
+function printSummary({ scope, port, serverUrl, readOnly, rotateToken, external }) {
   const panes = listWindowPanes(scope);
   console.log("");
   console.log("================ CodexPro TMUX Ready ================");
@@ -191,6 +194,7 @@ function printSummary({ scope, port, serverUrl, readOnly, rotateToken }) {
   console.log(`CWD    : ${fs.realpathSync(process.cwd())}`);
   console.log(`Local  : http://127.0.0.1:${port}/mcp`);
   console.log(`Access : ${readOnly ? "read-only" : "read + send enabled"}${rotateToken ? " (token rotated)" : ""}`);
+  if (external) console.log("Tunnel : externally managed (local backend ready; public routing not verified)");
   console.log(`URL    : ${serverUrl}`);
   console.log("");
   console.log(`Panes in ${scope.window}:`);
@@ -215,12 +219,20 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
 
   const scope = authorizeTmuxWindow(process.env.TMUX_PANE ?? "");
   const cwd = fs.realpathSync(process.cwd());
+  const endpoint = readExternalEndpoint(ENDPOINT_FILE, cwd);
+  const external = endpoint?.selected ? endpoint : undefined;
+  const explicitPort = argv.some(arg => arg === "--port" || arg.startsWith("--port="));
+  if (external && opts.localOnly) throw new Error("This instance is externally routed; --local cannot disable an independent tunnel. Remove the route locally first.");
+  if (external && explicitPort && opts.preferredPort !== external.port) throw new Error("Configured external endpoint requires its fixed port.");
+  if (!external && explicitPort && endpoint && opts.preferredPort === endpoint.port) throw new Error("Port is reserved for the configured external endpoint.");
   privateDirectory(STATE_DIR);
   const previous = previousState(cwd);
   const active = Boolean(previous && (isPidAlive(previous.pid) || isPidAlive(previous.childPid)));
   if (active && (previous.cwd !== cwd || previous.window !== scope.window || (previous.socket && previous.socket !== scope.socket) || (previous.serverPid && previous.serverPid !== scope.serverPid))) {
     throw new Error("Existing instance belongs to another tmux window; stop it locally before starting here.");
   }
+  // Check a new fixed port before replacing a running instance; never auto-increment a routed port.
+  if (external && !(active && previous.port === external.port) && !await isPortFree(external.port)) throw new Error("External endpoint port is occupied; existing instance unchanged.");
   // Verify an explicitly supplied migration token against the live local service before saving it.
   if (active && !rotateToken && process.env.CODEXPRO_HTTP_TOKEN?.trim()) {
     if (!Number.isInteger(previous.port) || previous.port < 1024 || previous.port > 65535) throw new Error("Invalid existing instance port.");
@@ -237,8 +249,9 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
   // Never change a legacy live token silently. Import it before stopping the old launcher.
   const token = persistentToken(CREDENTIAL_DIR, instanceKey(cwd), { initialToken: process.env.CODEXPRO_HTTP_TOKEN?.trim(), rotate: rotateToken, legacyRunning: active });
   await replaceExistingCwdInstance(cwd, scope);
-  const preferred = Number.isInteger(previous?.port) && !argv.some(arg => arg === "--port" || arg.startsWith("--port=")) ? previous.port : opts.preferredPort;
-  const port = await findFreePort(preferred);
+  const preferred = Number.isInteger(previous?.port) && !explicitPort ? previous.port : opts.preferredPort;
+  const port = external ? external.port : await findFreePort(preferred, endpoint?.port);
+  if (external && !await isPortFree(port)) throw new Error("Fixed external endpoint port is occupied; refusing alternate port.");
 
   const repoRoot = fileURLToPath(new URL("..", import.meta.url));
   const codexproEntry = fileURLToPath(new URL("./codexpro.mjs", import.meta.url));
@@ -258,7 +271,7 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
     "off",
     "--headless"
   ];
-  if (opts.localOnly) childArgs.push("--tunnel", "none");
+  if (opts.localOnly || external) childArgs.push("--tunnel", "none");
 
   const env = {
     ...process.env,
@@ -271,7 +284,7 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
     CODEXPRO_HOST: "127.0.0.1"
   };
   const hasProxy = Boolean(env.HTTPS_PROXY || env.https_proxy || env.ALL_PROXY || env.all_proxy || env.HTTP_PROXY || env.http_proxy);
-  if (!opts.localOnly && !hasProxy && await isPortListening(7890)) {
+  if (!opts.localOnly && !external && !hasProxy && await isPortListening(7890)) {
     env.HTTPS_PROXY = "http://127.0.0.1:7890";
   }
 
@@ -296,6 +309,7 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
       serverPid: scope.serverPid,
       anchor: scope.anchor,
       port,
+      external: Boolean(external),
       startedAt: new Date().toISOString()
     }, null, 2),
     { mode: 0o600 }
@@ -337,8 +351,8 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
     for (const line of lines) {
       if (line.startsWith("CODEXPRO_READY ") && !printedSummary) {
         printedSummary = true;
-        const serverUrl = line.slice("CODEXPRO_READY ".length).trim();
-        printSummary({ scope, port, serverUrl, readOnly: opts.readOnly, rotateToken });
+        const serverUrl = external ? externalServerUrl(external, token) : line.slice("CODEXPRO_READY ".length).trim();
+        printSummary({ scope, port, serverUrl, readOnly: opts.readOnly, rotateToken, external });
       } else {
         console.log(line);
       }

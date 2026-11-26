@@ -29,6 +29,18 @@ Existing shell aliases/symlinks may point to scripts/codexpro-tmux.mjs and scrip
 
 The update command now stages a remote checkout, builds and runs tmux:smoke in a private directory, without changing the running instance, token, port, or tunnel. It does not yet activate the staged release automatically. Its old rotate behavior has been removed. Activation/restart of the existing combined launcher still recreates Quick Tunnel and may change URL even with the same token. Stable URL across actual restarts requires a separately managed tunnel or named tunnel. Do not restart a production bridge during independent tests.
 
+## Fixed public hostname via an independently managed tunnel
+
+Configure the tunnel and DNS outside CodexPro. Route a dedicated HTTPS hostname to the fixed local port on 127.0.0.1. Create a private file at ~/.codexpro/tmux-endpoint.json (0600), containing e.g.:
+
+~~~json
+{"cwd":"/absolute/canonical/instance-directory","hostname":"bridge.example.com","port":18790}
+~~~
+
+The cwd is the realpath of the directory from which the launcher runs. Only this instance uses the configured endpoint; other directories retain their normal behavior and skip its reserved port. The launcher starts the backend with --tunnel none and binds 127.0.0.1 on the exact configured port. It never starts/stops cloudflared or changes DNS. A conflicting explicit port or an occupied fixed port fails instead of selecting another port. The local-ready summary prints the configured HTTPS MCP URL with the persistent token but does not claim the external route has been verified. Validate the route separately. A separately managed tunnel may still expose the port, so --local is rejected for this configured instance rather than falsely promising local-only access. Keep the config out of Git; do not place credentials in it.
+
+Ordinary code staging does not restart the service. Activation may interrupt MCP sessions; the independently managed hostname and saved token remain stable. A one-time migration from Quick Tunnel still requires local setup and a new ChatGPT endpoint URL. Do not remove the old tunnel before validating the new route.
+
 ## Direct pane selection
 
 Tell ChatGPT a pane ID (e.g. %1), or ask it to list candidates. Use `tmux list-panes` for optional local discovery. Eligible panes in the same authorized window are accessible regardless of working directory. Other windows, the launcher pane and common shells are excluded. Keep the launcher pane in the window. Candidate detection is not proof of agent identity; do not expose sensitive or unrelated applications.
