@@ -7,7 +7,7 @@ The fork adds an opt-in MCP bridge to existing interactive tmux agents. It does 
 On Linux/macOS with Node.js 20+ and tmux installed, clone and build the fork (do not install the upstream npm package expecting these features):
 
 ~~~bash
-git clone -b feat/tmux-agent-bridge https://github.com/21hbguo/codexpro_tmux.git
+git clone https://github.com/21hbguo/codexpro_tmux.git
 cd codexpro_tmux
 npm ci
 npm run tmux:smoke

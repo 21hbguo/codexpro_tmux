@@ -26,7 +26,7 @@
 
 ## 它是什么
 
-本项目基于 [rebel0789/codexpro](https://github.com/rebel0789/codexpro) 二次开发。tmux 功能目前位于 `feat/tmux-agent-bridge` 分支（PR #1），并未发布到 npm 或合并到本 fork 的 main。新增 `tmux_list_agents`、`tmux_read_output`、`tmux_send_message`、`tmux_wait_for_change`，保留原版仓库工具。
+本项目基于 [rebel0789/codexpro](https://github.com/rebel0789/codexpro) 二次开发，已通过 PR #1 合入本 fork 的 `main` 分支（未发布到 npm）。新增 `tmux_list_agents`、`tmux_read_output`、`tmux_send_message`、`tmux_wait_for_change`，保留原版仓库工具。
 
 CodexPro 是本地 MCP server。它连接**你的 ChatGPT 会话**、**你的机器**和**你允许的仓库**。
 
@@ -43,7 +43,7 @@ ChatGPT 可以读取、搜索、编辑、审查、验证、导入附件，并写
 ### 1. 克隆并构建
 
 ```bash
-git clone -b feat/tmux-agent-bridge https://github.com/21hbguo/codexpro_tmux.git
+git clone https://github.com/21hbguo/codexpro_tmux.git
 cd codexpro_tmux
 npm ci
 npm run tmux:smoke
@@ -209,7 +209,7 @@ chmod 600 ~/.codexpro/http-token
 
 ```bash
 cd "$BRIDGE"
-git switch feat/tmux-agent-bridge
+git switch main
 git pull --ff-only
 npm ci
 npm run tmux:smoke

@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { privateDirectory } from "./tmux-credentials.mjs";
 
-const branch = "feat/tmux-agent-bridge";
+const branch = "main";
 const repo = "https://github.com/21hbguo/codexpro_tmux.git";
 function run(command, args, cwd, env) {
   const result = spawnSync(command, args, { cwd, env, stdio: "inherit", timeout: 300000 });

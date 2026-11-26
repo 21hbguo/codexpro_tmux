@@ -16,7 +16,7 @@
 
 ## What it is
 
-This is an experimental fork of [rebel0789/codexpro](https://github.com/rebel0789/codexpro). The tmux bridge currently lives on `feat/tmux-agent-bridge` (PR #1), not upstream npm or this fork's main branch. It adds `tmux_list_agents`, `tmux_read_output`, `tmux_send_message`, and `tmux_wait_for_change` while retaining the original repository tools. See [README in Chinese](README_ZH.md).
+This is an experimental fork of [rebel0789/codexpro](https://github.com/rebel0789/codexpro). It adds `tmux_list_agents`, `tmux_read_output`, `tmux_send_message`, and `tmux_wait_for_change` on the `main` branch (merged from PR #1), while retaining the original repository tools. See [README in Chinese](README_ZH.md).
 
 CodexPro is a local MCP server. It connects **your ChatGPT session** to **your machine** and **repos you allow**.
 
@@ -33,7 +33,7 @@ Requirements: Linux/macOS, Git, Node.js 20+, npm, tmux, existing interactive age
 ### 1. Clone and build
 
 ```bash
-git clone -b feat/tmux-agent-bridge https://github.com/21hbguo/codexpro_tmux.git
+git clone https://github.com/21hbguo/codexpro_tmux.git
 cd codexpro_tmux
 npm ci
 npm run tmux:smoke
@@ -199,7 +199,7 @@ Stop the running bridge before updating. Use the same checkout path:
 
 ```bash
 cd "$BRIDGE"
-git switch feat/tmux-agent-bridge
+git switch main
 git pull --ff-only
 npm ci
 npm run tmux:smoke
