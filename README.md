@@ -205,3 +205,7 @@ npm run release:publish
 - [Stable URL guide](DOMAIN_SETUP.md)
 - [Changelog](CHANGELOG.md)
 - [Contributors](CONTRIBUTORS.md)
+
+## Fork feature: tmux Agent Bridge
+
+See [TMUX_BRIDGE.md](TMUX_BRIDGE.md) for opt-in interactive agent messaging, deployment and safety limitations.

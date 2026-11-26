@@ -197,3 +197,7 @@ codexpro --version
 - [稳定 URL 指南](DOMAIN_SETUP.md)
 - [Changelog](CHANGELOG.md)
 - [Contributors](CONTRIBUTORS.md)
+
+## 本 fork：tmux Agent Bridge
+
+支持向本地明确注册的 tmux Agent pane 读取输出、发送消息。默认关闭；部署、权限和限制见 [tmux bridge 指南](TMUX_BRIDGE.md)。
