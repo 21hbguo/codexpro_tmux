@@ -2,17 +2,16 @@
   <img src="docs/favicon.svg" width="72" height="72" alt="CodexPro logo">
 </p>
 
-<h1 align="center">CodexPro</h1>
+<h1 align="center">CodexPro TMUX</h1>
 
 <p align="center">
-  让 ChatGPT 在你明确允许的本地仓库上使用编码工具。
+  让网页版 ChatGPT 直接向本地 tmux Agent 发送消息、读取输出，并使用原有仓库工具。
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/codexpro"><img alt="npm" src="https://img.shields.io/npm/v/codexpro?style=flat-square"></a>
-  <a href="https://github.com/rebel0789/codexpro/actions"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/rebel0789/codexpro/ci.yml?branch=main&style=flat-square"></a>
-  <a href="https://github.com/rebel0789/codexpro/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/rebel0789/codexpro?style=flat-square"></a>
-  <a href="https://rebel0789.github.io/codexpro/zh.html"><img alt="中文站点" src="https://img.shields.io/badge/site-%E4%B8%AD%E6%96%87%E6%96%87%E6%A1%A3-67e8f9?style=flat-square"></a>
+  <a href="https://github.com/21hbguo/codexpro_tmux/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/21hbguo/codexpro_tmux?style=flat-square"></a>
+  <a href="https://github.com/21hbguo/codexpro_tmux/pull/1"><img alt="Status" src="https://img.shields.io/badge/tmux-experimental-orange?style=flat-square"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
 </p>
 
 <p align="center">
@@ -27,31 +26,48 @@
 
 ## 它是什么
 
+本项目基于 [rebel0789/codexpro](https://github.com/rebel0789/codexpro) 二次开发，已通过 PR #1 合入本 fork 的 `main` 分支（未发布到 npm）。新增 `tmux_list_agents`、`tmux_read_output`、`tmux_send_message`、`tmux_wait_for_change`，保留原版仓库工具。
+
 CodexPro 是本地 MCP server。它连接**你的 ChatGPT 会话**、**你的机器**和**你允许的仓库**。
 
 ChatGPT 可以读取、搜索、编辑、审查、验证、导入附件，并写 handoff 计划。范围始终限制在这些 root 内。
 
 它不是托管 SaaS、模型代理、配额绕过、账号池或远程 shell 服务。
 
-## 安装
+## 安装与启动（tmux 版）
 
-需要：
+环境要求：Linux/macOS、Git、Node.js 20+、npm、tmux、已安装的 Agent CLI，以及支持自定义 MCP 插件的 ChatGPT 账号。网页版还需要可访问的 HTTPS 隧道。
 
-- Node.js 20+
-- 能创建自定义 MCP 插件的 ChatGPT 账号
-- ChatGPT Web 可用的 HTTPS 地址（tunnel 或 Tailscale Funnel）
+**不要使用 `npm install -g codexpro` 安装本 fork**，那会安装原版，缺少 tmux 工具。以下命令使用 Bash 或兼容 Shell。
+
+### 1. 克隆并构建
 
 ```bash
-npm install -g codexpro
-cd /path/to/your/repo
-codexpro setup
+git clone https://github.com/21hbguo/codexpro_tmux.git
+cd codexpro_tmux
+npm ci
+npm run tmux:smoke
+export BRIDGE="$PWD"
 ```
+
+`npm run tmux:smoke` 会构建 TypeScript 并运行模拟测试。若失败请先排查，不要继续部署；模拟测试不等同于真实 Agent 联调。
+
+### 2. 启动 tmux-only 模式
+
+在专用 tmux Window 内启动一个或多个 Agent，再新建一个普通 Shell pane，在**任意目录**执行：
+
+```bash
+export BRIDGE="/absolute/path/to/codexpro_tmux"
+node "$BRIDGE/scripts/tmux-start.mjs" setup
+```
+
+无需选择 Workspace、无需注册 Agent。向导只配置端口、HTTPS 隧道和认证，安装目录仅作为内部配置索引，不授予文件访问权限。默认仅暴露四个 tmux 工具，使用 `setup --read-only` 可禁用发送。保护 MCP URL，专用 Window 内不要放无关或敏感程序。
 
 ## 在 ChatGPT 中连接
 
 1. `Settings -> Security and login` → 打开 **Developer mode**（保持 CSP 开启）。
 2. `Settings -> Plugins` → Plugins 标签页 → 搜索框旁的 **+**。
-3. 创建名为 `CodexPro` 的插件。
+3. 创建名为 `CodexPro TMUX` 的插件。
 4. 连接方式：**Server URL** → 粘贴 CodexPro 复制的 URL。
 5. 认证：**No Authentication / None**（表单可能默认 OAuth，创建前改掉）。
 
@@ -61,15 +77,23 @@ CodexPro 的认证就在这个 URL 里的 token。不要分享该 URL。
 | --- | --- |
 | ![打开 Plugins 并点击加号](docs/images/chatgpt-plugins-add.png) | ![填写 New Plugin 表单](docs/images/chatgpt-plugin-details.png) |
 
-同一仓库日常启动：
+### 日常启动
+
+在目标 Window 的普通 Shell pane 中执行（任意目录）：
 
 ```bash
-codexpro start
+node "$BRIDGE/scripts/tmux-start.mjs" start
 ```
 
-如果创建插件失败，运行 `codexpro connection-test`，确认 ChatGPT 请求是否到达本地 server。
+新 Shell 中重新设置 BRIDGE 为安装路径。加 `--read-only` 可禁用发送。直接告诉 ChatGPT pane ID，例如 %1，或让它查询候选 Agent。也可以自行运行 `tmux list-panes`。同 Window 中不同工作目录的 Agent 均可通信，无需注册或重启。发送前先读取并确认空白的 Agent 输入框。
 
-## ChatGPT 能做什么
+读取支持 cursor 增量快照；新增有限等待工具检测终端输出变化，不将其误判为任务完成。详见 [TMUX_BRIDGE.md](TMUX_BRIDGE.md)。
+
+### 可选：原版仓库模式
+
+原有 `scripts/codexpro.mjs` 保留为单独的高权限模式，继续使用 Workspace 和文件操作工具。仅需 tmux 通信时不要使用。详见 [TMUX_BRIDGE.md](TMUX_BRIDGE.md)。
+
+## 原版 CodexPro 功能（可选仓库模式）
 
 在 workspace write 模式（常规 agent 设置）下：
 
@@ -103,48 +127,48 @@ CodexPro 专注于一个清晰流程：把 ChatGPT 连接到明确允许的本�
 
 后续可靠性、代码导航和工作流改进见[路线图](ROADMAP.md)。
 
-## 多项目
+## 多项目（原版仓库模式）
 
 一个 CodexPro 进程可以允许多个仓库：
 
 ```bash
-codexpro settings set --project ~/code/web --project ~/code/api
-codexpro settings show
-codexpro start
+node "$BRIDGE/scripts/codexpro.mjs" settings set --project ~/code/web --project ~/code/api
+node "$BRIDGE/scripts/codexpro.mjs" settings show
+node "$BRIDGE/scripts/codexpro.mjs" start
 ```
 
 让 ChatGPT 对已允许项目执行 `open_workspace`。`open_current_workspace` 切回启动仓库。
 
 两个 ChatGPT 账号或需要硬隔离时，用不同端口和 Server URL 跑两个 CodexPro 进程。
 
-## 命令
+## 命令（原版仓库模式）
 
 ```bash
-codexpro setup
-codexpro start
-codexpro start --root /path/to/repo
-codexpro doctor
-codexpro connection-test
-codexpro settings
-codexpro inspect
-codexpro review
+node "$BRIDGE/scripts/codexpro.mjs" setup
+node "$BRIDGE/scripts/codexpro.mjs" start
+node "$BRIDGE/scripts/codexpro.mjs" start --root /path/to/repo
+node "$BRIDGE/scripts/codexpro.mjs" doctor
+node "$BRIDGE/scripts/codexpro.mjs" connection-test
+node "$BRIDGE/scripts/codexpro.mjs" settings
+node "$BRIDGE/scripts/codexpro.mjs" inspect
+node "$BRIDGE/scripts/codexpro.mjs" review
 ```
 
 常用模式：
 
 ```bash
-codexpro start --no-bash
-codexpro start --tool-mode minimal
-codexpro start --tool-mode full
-codexpro start --mode handoff
-codexpro start --mode pro
-codexpro start --headless
+node "$BRIDGE/scripts/codexpro.mjs" start --no-bash
+node "$BRIDGE/scripts/codexpro.mjs" start --tool-mode minimal
+node "$BRIDGE/scripts/codexpro.mjs" start --tool-mode full
+node "$BRIDGE/scripts/codexpro.mjs" start --mode handoff
+node "$BRIDGE/scripts/codexpro.mjs" start --mode pro
+node "$BRIDGE/scripts/codexpro.mjs" start --headless
 ```
 
 可选工具卡片：
 
 ```bash
-CODEXPRO_TOOL_CARDS=1 codexpro start
+CODEXPRO_TOOL_CARDS=1 node "$BRIDGE/scripts/codexpro.mjs" start
 ```
 
 ## 公网 HTTPS
@@ -152,11 +176,11 @@ CODEXPRO_TOOL_CARDS=1 codexpro start
 ChatGPT Web 需要 HTTPS：
 
 ```bash
-codexpro start --tunnel cloudflare
-codexpro ngrok --hostname your.ngrok-free.dev
-codexpro stable --hostname codexpro.example.com --tunnel-name codexpro
-codexpro tailscale --hostname your-device.your-tailnet.ts.net
-codexpro start --tunnel none
+node "$BRIDGE/scripts/codexpro.mjs" start --tunnel cloudflare
+node "$BRIDGE/scripts/codexpro.mjs" ngrok --hostname your.ngrok-free.dev
+node "$BRIDGE/scripts/codexpro.mjs" stable --hostname codexpro.example.com --tunnel-name codexpro
+node "$BRIDGE/scripts/codexpro.mjs" tailscale --hostname your-device.your-tailnet.ts.net
+node "$BRIDGE/scripts/codexpro.mjs" start --tunnel none
 ```
 
 稳定主机名请固定 token：
@@ -179,14 +203,19 @@ chmod 600 ~/.codexpro/http-token
 
 公网暴露前先读 [SECURITY.md](SECURITY.md)。
 
-## 更新
+## 更新本 fork
+
+先停止正在运行的 bridge，然后在同一安装目录中：
 
 ```bash
-npm install -g codexpro@latest
-codexpro --version
+cd "$BRIDGE"
+git switch main
+git pull --ff-only
+npm ci
+npm run tmux:smoke
 ```
 
-更新后重启 `codexpro start`。`~/.codexpro` 下的配置会保留。
+重新执行日常启动步骤，无需注册 pane。不要使用 `npm install -g codexpro@latest` 更新本 fork。
 
 ## 文档
 
@@ -197,3 +226,7 @@ codexpro --version
 - [稳定 URL 指南](DOMAIN_SETUP.md)
 - [Changelog](CHANGELOG.md)
 - [Contributors](CONTRIBUTORS.md)
+
+## 本 fork：tmux Agent Bridge
+
+支持向本地明确注册的 tmux Agent pane 读取输出、发送消息。默认关闭；部署、权限和限制见 [tmux bridge 指南](TMUX_BRIDGE.md)。
