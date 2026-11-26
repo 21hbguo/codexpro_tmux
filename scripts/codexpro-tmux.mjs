@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
+import { persistentToken, privateDirectory } from "./tmux-credentials.mjs";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -11,13 +12,15 @@ import { authorizeTmuxWindow } from "../dist/tmuxOps.js";
 const SHELL_RE = /^(?:-)?(?:bash|sh|dash|zsh|fish|ksh|csh|tcsh|ash|nu|nushell|xonsh|pwsh|powershell|cmd(?:\.exe)?|login|sudo|su|tmux|busybox)(?:\.exe)?$/i;
 const STATE_DIR = path.join(os.homedir(), ".codexpro", "tmux-instances");
 const DEFAULT_BASE_PORT = 8788;
+const CREDENTIAL_DIR = path.join(os.homedir(), ".codexpro", "tmux-credentials");
 
 function usage(commandName) {
   console.log(`Usage: ${commandName} [--read-only] [--local] [--port <port>]
 
 Run in a shell pane inside the target tmux window (foreground keepalive).
 - Authorizes the current tmux window (excluding this launcher pane)
-- Replaces any existing instance previously started from the same working directory
+- Replaces an existing instance for the same directory and window only
+- Reuses its persistent local token (explicit rotate command changes it)
 - Prints the window's panes and the MCP Server URL (Cloudflare Quick Tunnel by default)
 
 Options:
@@ -54,9 +57,11 @@ function parseOptions(argv) {
   return { readOnly, localOnly, preferredPort, help };
 }
 
-function stateFileForCwd(cwd) {
-  const hash = createHash("sha256").update(cwd).digest("hex").slice(0, 16);
-  return path.join(STATE_DIR, `${hash}.json`);
+function instanceKey(cwd) { return createHash("sha256").update(cwd).digest("hex").slice(0, 16); }
+function stateFileForCwd(cwd) { return path.join(STATE_DIR, `${instanceKey(cwd)}.json`); }
+function previousState(cwd) {
+  try { return JSON.parse(fs.readFileSync(stateFileForCwd(cwd), "utf8")); }
+  catch (err) { if (err.code === "ENOENT") return undefined; throw new Error("Invalid instance state; inspect it locally before restarting."); }
 }
 
 function isPidAlive(pid) {
@@ -99,7 +104,7 @@ async function terminatePid(pid, label) {
   return true;
 }
 
-async function replaceExistingCwdInstance(cwd) {
+async function replaceExistingCwdInstance(cwd, scope) {
   const statePath = stateFileForCwd(cwd);
   if (!fs.existsSync(statePath)) return;
   let prev;
@@ -109,7 +114,8 @@ async function replaceExistingCwdInstance(cwd) {
     fs.rmSync(statePath, { force: true });
     return;
   }
-  if (!prev || prev.cwd !== cwd) return;
+  if (!prev || prev.cwd !== cwd) throw new Error("Instance state directory mismatch.");
+  if ((isPidAlive(prev.pid) || isPidAlive(prev.childPid)) && (prev.window !== scope.window || (prev.socket && prev.socket !== scope.socket) || (prev.serverPid && prev.serverPid !== scope.serverPid))) throw new Error("Existing instance belongs to another tmux window; stop it locally before starting here.");
 
   const stoppedParent = await terminatePid(Number(prev.pid), "previous launcher");
   const stoppedChild = await terminatePid(Number(prev.childPid), "previous server");
@@ -200,7 +206,7 @@ function printSummary({ scope, port, serverUrl, readOnly, rotateToken }) {
   console.log("=====================================================");
 }
 
-export async function runCodexproTmux({ rotateToken = false, argv = process.argv.slice(2), commandName = rotateToken ? "codexpro_tmux_update" : "codexpro_tmux" } = {}) {
+export async function runCodexproTmux({ rotateToken = false, argv = process.argv.slice(2), commandName = rotateToken ? "codexpro_tmux_rotate" : "codexpro_tmux" } = {}) {
   const opts = parseOptions(argv);
   if (opts.help) {
     usage(commandName);
@@ -209,12 +215,17 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
 
   const scope = authorizeTmuxWindow(process.env.TMUX_PANE ?? "");
   const cwd = fs.realpathSync(process.cwd());
-  await replaceExistingCwdInstance(cwd);
-
-  const port = await findFreePort(opts.preferredPort);
-  const token = (!rotateToken && process.env.CODEXPRO_HTTP_TOKEN?.trim())
-    ? process.env.CODEXPRO_HTTP_TOKEN.trim()
-    : randomBytes(24).toString("hex");
+  privateDirectory(STATE_DIR);
+  const previous = previousState(cwd);
+  const active = Boolean(previous && (isPidAlive(previous.pid) || isPidAlive(previous.childPid)));
+  if (active && (previous.cwd !== cwd || previous.window !== scope.window || (previous.socket && previous.socket !== scope.socket) || (previous.serverPid && previous.serverPid !== scope.serverPid))) {
+    throw new Error("Existing instance belongs to another tmux window; stop it locally before starting here.");
+  }
+  // Never change a legacy live token silently. Import it before stopping the old launcher.
+  const token = persistentToken(CREDENTIAL_DIR, instanceKey(cwd), { initialToken: process.env.CODEXPRO_HTTP_TOKEN?.trim(), rotate: rotateToken, legacyRunning: active });
+  await replaceExistingCwdInstance(cwd, scope);
+  const preferred = Number.isInteger(previous?.port) && !argv.some(arg => arg === "--port" || arg.startsWith("--port=")) ? previous.port : opts.preferredPort;
+  const port = await findFreePort(preferred);
 
   const repoRoot = fileURLToPath(new URL("..", import.meta.url));
   const codexproEntry = fileURLToPath(new URL("./codexpro.mjs", import.meta.url));
@@ -225,6 +236,8 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
     repoRoot,
     "--port",
     String(port),
+    "--host",
+    "127.0.0.1",
     "--write",
     "off",
     "--no-bash",
@@ -241,7 +254,8 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
     CODEXPRO_TMUX_WINDOW: JSON.stringify(scope),
     CODEXPRO_TMUX_ALLOW_SEND: opts.readOnly ? "0" : "1",
     CODEXPRO_HTTP_TOKEN: token,
-    CODEXPRO_PORT: String(port)
+    CODEXPRO_PORT: String(port),
+    CODEXPRO_HOST: "127.0.0.1"
   };
   const hasProxy = Boolean(env.HTTPS_PROXY || env.https_proxy || env.ALL_PROXY || env.all_proxy || env.HTTP_PROXY || env.http_proxy);
   if (!opts.localOnly && !hasProxy && await isPortListening(7890)) {
@@ -265,6 +279,8 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
       childPid: child.pid ?? null,
       cwd,
       window: scope.window,
+      socket: scope.socket,
+      serverPid: scope.serverPid,
       anchor: scope.anchor,
       port,
       startedAt: new Date().toISOString()

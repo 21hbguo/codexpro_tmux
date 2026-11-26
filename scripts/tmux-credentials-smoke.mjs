@@ -1,0 +1,28 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { persistentToken } from "./tmux-credentials.mjs";
+
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codexpro-token-test-"));
+const key = "0123456789abcdef";
+try {
+  assert.throws(() => persistentToken(dir, key, { legacyRunning: true }), /older instance/);
+  const imported = "a".repeat(48);
+  assert.equal(persistentToken(dir, key, { legacyRunning: true, initialToken: imported }), imported);
+  assert.equal(persistentToken(dir, key), imported);
+  assert.throws(() => persistentToken(dir, key, { initialToken: "b".repeat(48) }), /differs/);
+  const file = path.join(dir, key + ".token");
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  const rotated = persistentToken(dir, key, { rotate: true });
+  assert.notEqual(rotated, imported);
+  assert.equal(persistentToken(dir, key), rotated);
+  const other = persistentToken(dir, "fedcba9876543210");
+  assert.notEqual(other, rotated);
+  fs.chmodSync(file, 0o644);
+  assert.throws(() => persistentToken(dir, key), /private regular file/);
+  fs.unlinkSync(file);
+  fs.symlinkSync(path.join(dir, "fedcba9876543210.token"), file);
+  assert.throws(() => persistentToken(dir, key));
+  console.log("tmux credential smoke passed");
+} finally { fs.rmSync(dir, { recursive: true, force: true }); }

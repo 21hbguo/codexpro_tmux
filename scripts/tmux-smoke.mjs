@@ -77,6 +77,16 @@ assert.equal(applyView(screen === v2.output ? v2.output : applyView(v1.output, v
 screen = "line 2\nline 3";
 const v4 = bridge.read(root, "executor", v3.cursor);
 assert.equal(applyView(applyView(applyView(v1.output, v2), v3), v4), screen);
+// Real tmux scrollback often has trailing blank lines and a changing TUI footer.
+screen = Array.from({ length: 100 }, (_, i) => "history " + i).join("\n") + "\nold footer\n\n";
+const scroll1 = bridge.read(root, "executor");
+screen = Array.from({ length: 100 }, (_, i) => "history " + (i + 15)).join("\n") + "\nnew footer\n\n";
+const scroll2 = bridge.read(root, "executor", scroll1.cursor);
+assert.equal(scroll2.delta_mode, "patch");
+assert.equal(scroll2.drop_prefix_lines, 15);
+assert.equal(applyView(scroll1.output, scroll2), screen);
+assert.equal(scroll2.visible_changed, true);
+assert.equal(bridge.read(root, "executor", scroll2.cursor).visible_changed, false);
 screen = "entire screen replaced";
 assert.equal(bridge.read(root, "executor", v4.cursor).delta_mode, "reset");
 const w1 = bridge.read(root, "executor");

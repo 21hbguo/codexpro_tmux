@@ -23,6 +23,12 @@ node "$BRIDGE/scripts/tmux-start.mjs" setup
 
 For daily use: `node "$BRIDGE/scripts/tmux-start.mjs" start`. Add `--read-only` to disable sending. No workspace selection or pane registration. The internal checkout profile stores connection settings; only tmux tools are exposed, not file, bash, Git, handoff, session or profile-edit tools. Keep the MCP URL private and refresh/reconnect the plugin after changing tool surfaces.
 
+## Local launcher and credential migration (preview)
+
+Existing shell aliases/symlinks may point to scripts/codexpro-tmux.mjs and scripts/codexpro-tmux-update.mjs. The updated launcher persists credentials in ~/.codexpro/tmux-credentials (mode 0700, per-directory token files mode 0600). The current directory identifies an instance, not a filesystem authorization. The launcher preserves an existing token and refuses a conflicting environment value. A pre-persistence live instance requires a one-time local import: supply its existing token via CODEXPRO_HTTP_TOKEN without printing it or putting it on the command line. If this is unavailable, leave the live bridge running; normal launch must not silently rotate it. After import, omit that variable on later starts. The separate scripts/codexpro-tmux-rotate.mjs is the explicit rotation command; link it as codexpro_tmux_rotate if desired. Do not run it unless intentionally revoking the old token. Old standalone tmux-start.mjs uses the upstream setup profile instead.
+
+The update command now stages a remote checkout, builds and runs tmux:smoke in a private directory, without changing the running instance, token, port, or tunnel. It does not yet activate the staged release automatically. Its old rotate behavior has been removed. Activation/restart of the existing combined launcher still recreates Quick Tunnel and may change URL even with the same token. Stable URL across actual restarts requires a separately managed tunnel or named tunnel. Do not restart a production bridge during independent tests.
+
 ## Direct pane selection
 
 Tell ChatGPT a pane ID (e.g. %1), or ask it to list candidates. Use `tmux list-panes` for optional local discovery. Eligible panes in the same authorized window are accessible regardless of working directory. Other windows, the launcher pane and common shells are excluded. Keep the launcher pane in the window. Candidate detection is not proof of agent identity; do not expose sensitive or unrelated applications.
@@ -73,7 +79,7 @@ Use a full read first. Store its cursor and revision separately. Pass the cursor
 
 The response delta_mode is full, reset, unchanged, or patch. For a patch, split the previous reconstructed output on LF, discard drop_prefix_lines lines, retain the first replace_from_line remaining lines, then append output split on LF if line_count exceeds the retained count. Join with LF. This reconstructs the bounded current view, including trailing empty lines. If the cursor is missing, expired, belongs to another target, or the TUI changes too much, the response may be a full reset. Never treat a patch as a complete terminal transcript or as newly generated text. Read without cursor before sending if the full prompt has not been verified.
 
-tmux_wait_for_change compares the raw revision to a prior revision. It polls at about 500 ms intervals, returns event changed or timeout, and accepts 1–15 seconds (default 10); slow tmux subprocesses can extend the elapsed time. Concurrent waits are capped at 8 per server process. An output change is not a completion event. An unchanged screen is not proof of idle. activity remains unknown; copy_mode reports tmux copy mode. No background task is created. Stop polling on authorization/identity failures.
+tmux_wait_for_change compares the raw revision to a prior revision. It polls at about 500 ms intervals, returns event changed or timeout, and accepts 1–15 seconds (default 10); slow tmux subprocesses can extend the elapsed time. Concurrent waits are capped at 8 per server process. An output change is not a completion event. visible_changed (when a matching cursor exists) distinguishes changes in the returned redacted view from raw revision changes. An unchanged screen is not proof of idle. activity remains unknown; copy_mode reports tmux copy mode. No background task is created. Stop polling on authorization/identity failures.
 
 ## Safety and limitations
 

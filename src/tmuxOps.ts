@@ -233,7 +233,8 @@ export class TmuxBridge {
           if (before[offset] !== after[0]) continue;
           let overlap = 0;
           while (offset + overlap < before.length && overlap < after.length && before[offset + overlap] === after[overlap]) overlap++;
-          if (overlap >= 3 && overlap > keep && offset + overlap === before.length) {
+          // The matching prefix may end before the old footer: the patch discards that suffix.
+          if (overlap >= 3 && overlap > keep) {
             drop = offset;
             keep = overlap;
           }
@@ -257,7 +258,8 @@ export class TmuxBridge {
       delta_mode: deltaMode, base_cursor: deltaMode === "patch" || deltaMode === "unchanged" ? previousCursor : undefined,
       drop_prefix_lines: dropPrefixLines, replace_from_line: replaceFromLine,
       line_count: full.split("\n").length, output, truncated: clean.length > MAX_CAPTURE_CHARS,
-      activity: "unknown", copy_mode: s.inMode === "1"
+      activity: "unknown", copy_mode: s.inMode === "1",
+      visible_changed: previous?.identity === identity ? previous.output !== full : undefined
     };
   }
 
