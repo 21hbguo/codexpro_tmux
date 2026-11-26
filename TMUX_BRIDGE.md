@@ -7,12 +7,11 @@ The fork adds an opt-in MCP bridge to existing interactive tmux agents. It does 
 On Linux/macOS with Node.js 20+ and tmux installed, clone and build the fork (do not install the upstream npm package expecting these features):
 
 ~~~bash
-git clone https://github.com/21hbguo/codexpro_tmux.git
+git clone -b feat/tmux-agent-bridge https://github.com/21hbguo/codexpro_tmux.git
 cd codexpro_tmux
 npm ci
-npm run build
 npm run tmux:smoke
-BRIDGE="$PWD"
+export BRIDGE="$PWD"
 ~~~
 
 Start Codex/OpenCode/Claude Code in dedicated tmux panes, using the same OS account and tmux server as the bridge. Open the intended research repository in those panes. From a separate local shell:
@@ -21,9 +20,9 @@ Start Codex/OpenCode/Claude Code in dedicated tmux panes, using the same OS acco
 cd /path/to/your/research-repo
 tmux list-panes -a -F '#{pane_id} #{session_name} #{pane_current_command} #{pane_current_path}'
 # Replace %1 and %2 with your own pane IDs; both agents must already be running.
-REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" executor=%1 reviewer=%2)" || exit 1
-export CODEXPRO_TMUX_AGENTS="$REGISTRY"
-export CODEXPRO_TMUX_ALLOW_SEND=1
+REGISTRY="$(node "$BRIDGE/scripts/tmux-register.mjs" executor=%1 reviewer=%2)" &&
+export CODEXPRO_TMUX_AGENTS="$REGISTRY" &&
+export CODEXPRO_TMUX_ALLOW_SEND=1 &&
 node "$BRIDGE/scripts/codexpro.mjs" setup
 ~~~
 
@@ -32,9 +31,21 @@ For later launches, run the same registration/export commands before:
 node "$BRIDGE/scripts/codexpro.mjs" start
 ~~~
 
-Use the server URL printed by this local fork; connect it using the upstream README instructions. Keep the authentication token private. If the existing plugin caches the tool list, refresh/reconnect it; the existing supertool can also use the new action names. Do not use the upstream globally installed binary by mistake.
+Use the server URL printed by this local fork; connect it using the [fork README instructions](README.md). Keep the authentication token private. If the existing plugin caches the tool list, refresh/reconnect it; the existing supertool can also use the new action names. Do not use the upstream globally installed binary by mistake.
 
 The registry is local-only configuration, not editable via MCP. An alias binds one exact pane ID, server PID, pane PID, foreground command reported by tmux, socket path, and canonical workspace root. Re-register after restarting tmux/agents, changing panes, or changing workspace. For a named tmux server, run registration from a shell within that server (or with the appropriate TMUX environment). Only selected workspace agents are visible.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| No tmux tools in ChatGPT | Use the fork checkout, export the registry before launching, exit connection-test mode, refresh/reconnect the plugin. |
+| Send tool missing | Set CODEXPRO_TMUX_ALLOW_SEND=1 before launch and verify write mode is not off. |
+| Agent unavailable or changed | Check same user/socket, correct pane ID, running agent and workspace, then re-register and restart. |
+| Stale revision or copy mode | Read output again and inspect the empty input prompt; exit copy mode locally. |
+| Message not received / partial submit | Inspect the pane before retrying; do not blindly resend. |
+| Build error | Check Node.js 20+, run npm ci and npm run tmux:smoke in the fork root. |
+| HTTPS or MCP connection failure | Run the fork's doctor or connection-test command. Keep tokens private. |
 
 ## MCP tools
 
