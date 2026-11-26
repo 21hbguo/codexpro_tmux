@@ -56,7 +56,11 @@ async function freePort() {
 }
 export function selectedRelease(stateDir, key, releaseDir, fallback) {
   const pointer = readPrivateJson(path.join(stateDir, key + ".release.json"));
-  return pointer ? checkedRelease(releaseDir, pointer.root).root : fallback;
+  if (!pointer) return fallback;
+  try { return checkedRelease(releaseDir, pointer.root).root; }
+  catch (error) {
+    throw new Error("Recorded active release is missing or invalid. Restore its staged directory, or explicitly remove the instance release pointer locally to select the installed fallback. Do not delete active stage directories.", { cause: error });
+  }
 }
 export async function superviseExternal({ root, port, token, env, stateDir, key, releaseDir, onReady, onState, releaseStartup, onExit }) {
   // Preserve the original anchor, authorization, access policy and credentials on every switch.
@@ -120,23 +124,26 @@ export async function superviseExternal({ root, port, token, env, stateDir, key,
           } catch {
             console.error("Activation and rollback failed; inspect the local port and process state.");
             process.exitCode = 1;
-            finish();
+            closing = true; // Stop accepting new work; flush the failure reply before teardown.
             return { status: "rollback_failed" };
           }
         }
       } catch (error) {
         return { status: "rejected", reason: error.message };
       } finally {
-        if (candidate) await stopBackend(candidate);
-        unlock();
+        try { if (candidate) await stopBackend(candidate); }
+        finally { unlock(); }
       }
     })();
     transition = operation;
     try { return await operation; }
     finally { transition = undefined; if (active?.exited && !closing) { process.exitCode = 1; finish(); } }
   }
-  const signal = () => { closing = true; finish(); };
-  for (const name of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(name, signal);
+  const signals = Object.entries({ SIGINT: 130, SIGTERM: 143, SIGHUP: 129 }).map(([name, code]) => {
+    const handler = () => { process.exitCode = code; closing = true; finish(); };
+    process.on(name, handler);
+    return [name, handler];
+  });
   let ownsSocket = false;
   try {
     active = await start(currentRoot, port);
@@ -167,7 +174,17 @@ export async function superviseExternal({ root, port, token, env, stateDir, key,
           if (typeof request.release !== "string" || Object.keys(request).length !== 1) throw new Error("Invalid request.");
           response = await activate(request.release);
         } catch { response = { status: "rejected", reason: "Invalid or failed local activation request." }; }
-        conn.end(JSON.stringify(response) + "\n");
+        if (response.status === "rollback_failed") {
+          // Wait for the socket write to complete, but do not let a disconnected client
+          // or blocked connection prevent cleanup of the failed backend.
+          if (conn.destroyed) { finish(); return; }
+          const timer = setTimeout(finish, 1000);
+          const flushed = () => { clearTimeout(timer); finish(); };
+          conn.once("close", flushed);
+          conn.end(JSON.stringify(response) + "\n", flushed);
+        } else {
+          conn.end(JSON.stringify(response) + "\n");
+        }
       });
     });
     await new Promise((resolve, reject) => {
@@ -187,6 +204,6 @@ export async function superviseExternal({ root, port, token, env, stateDir, key,
     if (ownsSocket) fs.rmSync(socketPath, { force: true });
     await stopBackend(active);
     onExit();
-    for (const name of ["SIGINT", "SIGTERM", "SIGHUP"]) process.off(name, signal);
+    for (const [name, handler] of signals) process.off(name, handler);
   }
 }
