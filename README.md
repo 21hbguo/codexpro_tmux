@@ -37,7 +37,7 @@ git clone https://github.com/21hbguo/codexpro_tmux.git
 cd codexpro_tmux
 npm ci
 npm run tmux:smoke
-export BRIDGE="$PWD"
+npm run tmux:install
 ```
 
 `npm run tmux:smoke` builds the TypeScript and runs mock bridge checks. Stop if it fails. This does not replace testing with a real agent pane.
@@ -47,11 +47,11 @@ export BRIDGE="$PWD"
 Start one or more agents in a dedicated tmux window and open a separate shell pane in that window. From **any directory**:
 
 ```bash
-export BRIDGE="/absolute/path/to/codexpro_tmux"
-node "$BRIDGE/scripts/tmux-start.mjs" setup
+codexpro_tmux setup bridge.example.com
+codexpro_tmux
 ```
 
-No workspace selection or agent registration. The wizard configures port, HTTPS tunnel and authentication, using the installation directory as an internal profile key only. By default only four tmux tools are exposed. Use `setup --read-only` to disable sending. Keep the MCP URL private and use a dedicated window without unrelated or sensitive programs.
+Replace bridge.example.com with your hostname. Setup saves the domain and port (default 8790); existing fixed configuration is reused. Configure your named tunnel or HTTPS reverse proxy to http://127.0.0.1:8790; DNS and tunnel changes are not performed by the CLI. Without a configured domain, explicitly use `codexpro_tmux --quick-tunnel`. Use `--read-only` at startup to disable sending. Keep the MCP URL private.
 
 ## Connect in ChatGPT
 
@@ -72,10 +72,10 @@ CodexPro auth is the token already in that URL. Do not share the URL.
 In a shell pane in the desired window (any directory):
 
 ```bash
-node "$BRIDGE/scripts/tmux-start.mjs" start
+codexpro_tmux
 ```
 
-Set BRIDGE to the installation path in a new shell. Add `--read-only` to disable sending. Tell ChatGPT a pane ID (e.g. %1), or ask it to list candidates. No alias or workspace required. Optional local discovery: `tmux list-panes`. Agents can work in different directories. Read the target output and verify its empty agent prompt before sending.
+Hostname, port and token do not depend on the working directory. Use `codexpro_tmux add` or `codexpro_tmux remove` in another window; run `codexpro_tmux_update` from any directory. Add `--read-only` to disable sending. Tell ChatGPT a pane ID (e.g. %1), or ask it to list candidates. No alias or workspace required. Optional local discovery: `tmux list-panes`. Agents can work in different directories. Read the target output and verify its empty agent prompt before sending.
 
 Incremental reads accept a cursor; bounded waits detect output changes, not agent completion. See [TMUX_BRIDGE.md](TMUX_BRIDGE.md).
 
