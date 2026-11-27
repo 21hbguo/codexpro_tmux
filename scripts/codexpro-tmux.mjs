@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { persistentToken, privateDirectory } from "./tmux-credentials.mjs";
 import { readExternalEndpoint, externalServerUrl } from "./tmux-endpoint.mjs";
 import { instanceLock, controlPath, writePrivateJson } from "./tmux-lifecycle.mjs";
-import { selectedRelease, superviseExternal } from "./tmux-supervisor.mjs";
+import { selectedRelease, superviseExternal, assertWindowBackendCompatible } from "./tmux-supervisor.mjs";
 import { prepareWindows, runWindowCommand, windowsFileFor } from "./tmux-windows.mjs";
 import fs from "node:fs";
 import net from "node:net";
@@ -247,7 +247,10 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
   }
   const repoRoot = fileURLToPath(new URL("..", import.meta.url));
   const backendRoot = external ? selectedRelease(STATE_DIR, key, RELEASE_DIR, fs.realpathSync(repoRoot)) : repoRoot;
-  if (external) controlPath(STATE_DIR, key);
+  if (external) {
+    controlPath(STATE_DIR, key);
+    assertWindowBackendCompatible(backendRoot);
+  }
   // Check a new fixed port before replacing a running instance; never auto-increment a routed port.
   if (external && !(active && previous.port === external.port) && !await isPortFree(external.port)) throw new Error("External endpoint port is occupied; existing instance unchanged.");
   // Verify an explicitly supplied migration token against the live local service before saving it.

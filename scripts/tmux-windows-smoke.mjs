@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { TmuxBridge, authorizeTmuxWindow, readWindowAuthorization, withWindowAuthorizationLock } from "../dist/tmuxOps.js";
 import { writePrivateJson } from "./tmux-lifecycle.mjs";
 import { prepareWindows } from "./tmux-windows.mjs";
+import { assertWindowBackendCompatible } from "./tmux-supervisor.mjs";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tmux-windows-smoke-"));
 const socket = path.join(dir, "tmux.sock"), file = path.join(dir, "test.windows.json");
@@ -32,6 +33,12 @@ const run = (s, args) => {
   return "";
 };
 try {
+  assertWindowBackendCompatible(fs.realpathSync("."));
+  const old = path.join(dir, "old");
+  fs.mkdirSync(path.join(old, "dist"), { recursive: true });
+  fs.writeFileSync(path.join(old, "package.json"), '{"type":"module"}');
+  fs.writeFileSync(path.join(old, "dist", "tmuxOps.js"), "export const TMUX_TOOLS = [];");
+  assert.throws(()=>assertWindowBackendCompatible(old),/unsafe downgrade/);
   const root = authorizeTmuxWindow("%0", run);
   prepareWindows(file, root);
   const first = readWindowAuthorization(file);

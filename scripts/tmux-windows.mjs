@@ -9,7 +9,7 @@ import { authorizeTmuxWindow, sameWindowScope, readWindowAuthorization, verifyLo
 const keyFor = cwd => createHash("sha256").update(cwd).digest("hex").slice(0, 16);
 export const windowsFileFor = (stateDir, key) => path.join(stateDir, key + ".windows.json");
 
-// Invoked under the lifecycle lock. A different launcher identity never inherits grants.
+// Invoked under the lifecycle lock. A different launcher identity never inherits old window permissions.
 export function prepareWindows(file, root) {
   return withWindowAuthorizationLock(file, () => {
     let old;

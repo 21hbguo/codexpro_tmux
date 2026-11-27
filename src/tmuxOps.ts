@@ -7,6 +7,7 @@ import type { CodexProConfig } from "./config.js";
 import { CodexProError, isSubpath } from "./guard.js";
 import { hasSecretValue, redactSensitiveText } from "./redact.js";
 
+export const TMUX_WINDOW_AUTH_VERSION = 1;
 export const TMUX_TOOLS = ["tmux_list_agents", "tmux_read_output", "tmux_send_message", "tmux_wait_for_change"] as const;
 const CACHE_LIMIT = 64;
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -177,6 +178,7 @@ export class TmuxBridge {
     this.scope = windowAuthorization.trim() ? parseWindowScope(windowAuthorization) : undefined;
     if (this.authorizationFile && !this.scope) fail("Dynamic window authorization requires local window mode.");
     this.bindings = this.scope ? new Map() : parseBindings(registry);
+    if (this.authorizationFile) this.authorizedWindows();
   }
 
   static fromEnvironment(): TmuxBridge {
