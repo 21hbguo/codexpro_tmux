@@ -6,6 +6,7 @@ import { readExternalEndpoint, externalServerUrl, configureExternalEndpoint, sel
 import { instanceLock, controlPath, writePrivateJson, readPrivateJson } from "./tmux-lifecycle.mjs";
 import { selectedRelease, superviseExternal, assertWindowBackendCompatible } from "./tmux-supervisor.mjs";
 import { prepareWindows, runWindowCommand, runWindowCommandLocked, fixedStartupAction, windowsFileFor } from "./tmux-windows.mjs";
+import { runTmuxUpdate } from "./codexpro-tmux-update.mjs";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -20,28 +21,52 @@ const CREDENTIAL_DIR = path.join(os.homedir(), ".codexpro", "tmux-credentials");
 const ENDPOINT_FILE = path.join(os.homedir(), ".codexpro", "tmux-endpoint.json");
 const RELEASE_DIR = path.join(os.homedir(), ".codexpro", "tmux-releases");
 
-function usage(commandName) {
-  console.log(`Usage: ${commandName} [--read-only] [--local | --quick-tunnel] [--port <port>]
-       codexpro_tmux setup <hostname> [--port <port>]
-       codexpro_tmux add | remove | list | status  (fixed endpoint; local only)
+function usage() {
+  console.log(`CodexPro TMUX
+One fixed MCP URL. One persistent token. Multiple authorized tmux windows.
 
-Run in a shell pane inside the target tmux window. First start keeps the service in the foreground; later fixed-endpoint invocations add the current window and exit.
-- Initially authorizes the current tmux window (excluding this launcher pane)
-- Fixed endpoint: add/remove the current window locally; list/status show the active scope
-- Uses the saved fixed domain from any directory; temporary tunnels are opt-in
-- If the fixed endpoint is already running, add the current window without restart
-- A repeated call in an authorized window is a no-op
-- Stop the fixed supervisor locally before explicitly rotating its token
-- Reuses its persistent local token (explicit rotate command changes it)
-- Prints the window's panes and the MCP Server URL (externally managed tunnel when configured)
-- The configured external endpoint has a fixed port and is never managed by this launcher
+USAGE
+  codexpro_tmux [options]                Start, or add the current window
 
-Options:
-  --read-only     Disable tmux_send_message (read-only mode)
-  --local         Start an explicitly separate local HTTP instance
-  --quick-tunnel  Start an explicitly separate temporary Cloudflare tunnel
-  --port <port>   Preferred starting local port (default: ${DEFAULT_BASE_PORT})
-  -h, --help      Show this help`);
+CONFIGURATION
+  codexpro_tmux setup <hostname>         Save a fixed domain
+                     [--port <port>]     Fixed port (default: 8790)
+  codexpro_tmux setup                    Show saved domain and port
+
+WINDOW ACCESS (local only)
+  codexpro_tmux add                      Add current window
+  codexpro_tmux remove                   Remove current window
+  codexpro_tmux list                     List authorized windows
+  codexpro_tmux status                   Show service status
+
+MAINTENANCE
+  codexpro_tmux update                   Fetch, test and activate backend
+  codexpro_tmux update --stage-only      Prepare release without activation
+  codexpro_tmux rotate                   Rotate token and start service
+  codexpro_tmux help                     Show this help (-h, --help)
+
+START OPTIONS
+  --read-only                            Disable message sending
+  --local                                Separate local-only instance
+  --quick-tunnel                         Separate temporary Cloudflare URL
+  --port <port>                          Port (fixed endpoint must match config)
+
+NOTES
+  First start: run in a dedicated shell pane and leave it running.
+  Later starts: add the current window to the running fixed endpoint and exit.
+  Same tmux server only; working directory does not matter.
+  add/remove do not restart the service or change its token or URL.
+  update may interrupt MCP sessions; supervisor/CLI upgrades require local migration.
+  rotate requires stopping the fixed supervisor first (Ctrl+C in its launcher).
+  DNS and the named tunnel are managed independently.
+  No automatic temporary-tunnel fallback.
+
+EXAMPLE
+  codexpro_tmux setup bridge.example.com
+  codexpro_tmux
+  # In another window:
+  codexpro_tmux add
+`);
 }
 
 function parseOptions(argv) {
@@ -227,10 +252,23 @@ function printSummary({ scope, port, serverUrl, readOnly, rotateToken, external 
 }
 
 export async function runCodexproTmux({ rotateToken = false, argv = process.argv.slice(2), commandName = rotateToken ? "codexpro_tmux_rotate" : "codexpro_tmux" } = {}) {
+  if (argv[0] === "help" || argv[0] === "-h" || argv[0] === "--help") {
+    if (argv.length !== 1) throw new Error("Usage: codexpro_tmux help");
+    usage();
+    return;
+  }
+  if (argv[0] === "update") {
+    if (rotateToken) throw new Error("Use codexpro_tmux update.");
+    return runTmuxUpdate(argv.slice(1));
+  }
+  if (argv[0] === "rotate") {
+    if (rotateToken) throw new Error("Use codexpro_tmux rotate.");
+    return runCodexproTmux({ rotateToken: true, argv: argv.slice(1), commandName: "codexpro_tmux rotate" });
+  }
   if (argv[0] === "setup") {
     if (rotateToken) throw new Error("Use codexpro_tmux setup, not the rotation command.");
     const args = argv.slice(1);
-    if (args.length === 1 && ["-h", "--help"].includes(args[0])) { usage(commandName); return; }
+    if (args.length === 1 && ["-h", "--help"].includes(args[0])) { usage(); return; }
     if (args.length !== 0 && args.length !== 1 && !(args.length === 3 && args[1] === "--port")) throw new Error("Usage: codexpro_tmux setup <hostname> [--port <port>]");
     if (args[0]?.startsWith("-")) throw new Error("Supply a hostname, not an option.");
     const endpoint = configureExternalEndpoint(ENDPOINT_FILE, STATE_DIR, args[0], args.length === 3 ? Number(args[2]) : undefined);
@@ -247,7 +285,7 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
   }
   const opts = parseOptions(argv);
   if (opts.help) {
-    usage(commandName);
+    usage();
     return;
   }
 

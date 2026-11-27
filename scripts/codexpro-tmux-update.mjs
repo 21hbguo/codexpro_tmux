@@ -6,6 +6,7 @@ import { readExternalEndpoint, fixedInstanceKey } from "./tmux-endpoint.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { privateDirectory } from "./tmux-credentials.mjs";
 
 const branch = "main";
@@ -14,10 +15,9 @@ function run(command, args, cwd, env) {
   const result = spawnSync(command, args, { cwd, env, stdio: "inherit", timeout: 300000 });
   if (result.error || result.status !== 0) throw new Error(command + " failed during staging; live instance was not changed.");
 }
-try {
-  const args = process.argv.slice(2);
+export async function runTmuxUpdate(args = process.argv.slice(2)) {
   if (args.includes("--help") || args.includes("-h")) {
-    console.log("Usage: codexpro_tmux_update [--stage-only]\nFetch, build and test remotely tracked code; activate via the running fixed-endpoint supervisor if available. Token and tunnel unchanged. --stage-only never activates.");
+    console.log("Usage: codexpro_tmux update [--stage-only]\nFetch, build and test remotely tracked code; activate via the running fixed-endpoint supervisor if available. Token and tunnel unchanged. --stage-only never activates.");
   } else {
     if (args.some(arg => arg !== "--stage-only")) throw new Error("Only --stage-only is supported.");
     const root = path.join(os.homedir(), ".codexpro", "tmux-releases");
@@ -55,7 +55,8 @@ try {
       if (!["activated", "unchanged"].includes(result.status)) process.exitCode = 1;
     }
   }
-} catch (error) {
-  console.error(error.message);
-  process.exitCode = 1;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
+  runTmuxUpdate().catch(error => { console.error(error.message); process.exitCode = 1; });
 }

@@ -75,7 +75,7 @@ In a shell pane in the desired window (any directory):
 codexpro_tmux
 ```
 
-Hostname, port and token do not depend on the working directory. Running `codexpro_tmux` again in another window on the same tmux server adds that window to the existing service and exits; `codexpro_tmux add` is the explicit equivalent. Use `codexpro_tmux remove` to remove it. Repeated starts do not restart a live fixed service or generate another URL/token. Run `codexpro_tmux_update` from any directory. Add `--read-only` to disable sending. Tell ChatGPT a pane ID (e.g. %1), or ask it to list candidates. No alias or workspace required. Optional local discovery: `tmux list-panes`. Agents can work in different directories. Read the target output and verify its empty agent prompt before sending.
+Hostname, port and token do not depend on the working directory. Running `codexpro_tmux` again in another window on the same tmux server adds that window to the existing service and exits; `codexpro_tmux add` is the explicit equivalent. Use `codexpro_tmux remove` to remove it. Repeated starts do not restart a live fixed service or generate another URL/token. Run `codexpro_tmux update` from any directory. Add `--read-only` to disable sending. Tell ChatGPT a pane ID (e.g. %1), or ask it to list candidates. No alias or workspace required. Optional local discovery: `tmux list-panes`. Agents can work in different directories. Read the target output and verify its empty agent prompt before sending.
 
 Incremental reads accept a cursor; bounded waits detect output changes, not agent completion. See [TMUX_BRIDGE.md](TMUX_BRIDGE.md).
 
@@ -233,3 +233,7 @@ This fork is not published on npm. Do not run the inherited upstream release/pub
 ## Fork feature: tmux Agent Bridge
 
 See [TMUX_BRIDGE.md](TMUX_BRIDGE.md) for opt-in interactive agent messaging, deployment and safety limitations.
+
+### CLI help
+
+Run `codexpro_tmux help` for the command reference. Use `codexpro_tmux update` for backend updates, `codexpro_tmux add` for local authorization, and `codexpro_tmux rotate` for explicit token rotation after stopping the fixed service. The old underscore-suffixed command aliases remain compatible.

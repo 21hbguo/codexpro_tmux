@@ -32,6 +32,6 @@ try {
     }
     throw error;
   }
-  console.log("CLI installed in " + bin + ". No service or endpoint changed.");
+  console.log("CLI installed in " + bin + ". Run codexpro_tmux help. Old update/rotate aliases are retained for compatibility. No service or endpoint changed.");
   if (!(process.env.PATH ?? "").split(path.delimiter).includes(bin)) console.log("Add ~/.local/bin to PATH in your shell.");
 } catch (error) { console.error(error.message); process.exitCode = 1; }

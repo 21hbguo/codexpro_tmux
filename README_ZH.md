@@ -85,7 +85,7 @@ CodexPro 的认证就在这个 URL 里的 token。不要分享该 URL。
 codexpro_tmux
 ```
 
-固定域名、端口和 Token 不随工作目录变化。同一 tmux server 的其他 Window 再执行 `codexpro_tmux`，自动加入原服务后退出；也可以显式使用 `codexpro_tmux add`，使用 `codexpro_tmux remove` 移除。重复启动不重启在线服务、不生成新 URL/Token。`codexpro_tmux_update` 在任意目录运行。加 `--read-only` 可禁用发送。直接告诉 ChatGPT pane ID，例如 %1，或让它查询候选 Agent。也可以自行运行 `tmux list-panes`。同 Window 中不同工作目录的 Agent 均可通信，无需注册或重启。发送前先读取并确认空白的 Agent 输入框。
+固定域名、端口和 Token 不随工作目录变化。同一 tmux server 的其他 Window 再执行 `codexpro_tmux`，自动加入原服务后退出；也可以显式使用 `codexpro_tmux add`，使用 `codexpro_tmux remove` 移除。重复启动不重启在线服务、不生成新 URL/Token。`codexpro_tmux update` 在任意目录运行。加 `--read-only` 可禁用发送。直接告诉 ChatGPT pane ID，例如 %1，或让它查询候选 Agent。也可以自行运行 `tmux list-panes`。同 Window 中不同工作目录的 Agent 均可通信，无需注册或重启。发送前先读取并确认空白的 Agent 输入框。
 
 读取支持 cursor 增量快照；新增有限等待工具检测终端输出变化，不将其误判为任务完成。详见 [TMUX_BRIDGE.md](TMUX_BRIDGE.md)。
 
@@ -230,3 +230,7 @@ npm run tmux:smoke
 ## 本 fork：tmux Agent Bridge
 
 支持向本地明确注册的 tmux Agent pane 读取输出、发送消息。默认关闭；部署、权限和限制见 [tmux bridge 指南](TMUX_BRIDGE.md)。
+
+### 命令帮助
+
+运行 `codexpro_tmux help` 查看完整命令。所有日常操作统一为子命令；旧的下划线 update/rotate 命令仍兼容。update 更新代码，add 只增加授权 Window，rotate 显式更换 Token（先停止固定服务）。
