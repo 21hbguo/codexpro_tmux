@@ -3,9 +3,9 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { persistentToken, privateDirectory } from "./tmux-credentials.mjs";
 import { readExternalEndpoint, externalServerUrl, configureExternalEndpoint, selectLaunchEndpoint } from "./tmux-endpoint.mjs";
-import { instanceLock, controlPath, writePrivateJson } from "./tmux-lifecycle.mjs";
+import { instanceLock, controlPath, writePrivateJson, readPrivateJson } from "./tmux-lifecycle.mjs";
 import { selectedRelease, superviseExternal, assertWindowBackendCompatible } from "./tmux-supervisor.mjs";
-import { prepareWindows, runWindowCommand, windowsFileFor } from "./tmux-windows.mjs";
+import { prepareWindows, runWindowCommand, runWindowCommandLocked, fixedStartupAction, windowsFileFor } from "./tmux-windows.mjs";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -25,11 +25,13 @@ function usage(commandName) {
        codexpro_tmux setup <hostname> [--port <port>]
        codexpro_tmux add | remove | list | status  (fixed endpoint; local only)
 
-Run in a shell pane inside the target tmux window (foreground keepalive).
+Run in a shell pane inside the target tmux window. First start keeps the service in the foreground; later fixed-endpoint invocations add the current window and exit.
 - Initially authorizes the current tmux window (excluding this launcher pane)
 - Fixed endpoint: add/remove the current window locally; list/status show the active scope
 - Uses the saved fixed domain from any directory; temporary tunnels are opt-in
-- Replaces an existing instance for the same identity and window only
+- If the fixed endpoint is already running, add the current window without restart
+- A repeated call in an authorized window is a no-op
+- Stop the fixed supervisor locally before explicitly rotating its token
 - Reuses its persistent local token (explicit rotate command changes it)
 - Prints the window's panes and the MCP Server URL (externally managed tunnel when configured)
 - The configured external endpoint has a fixed port and is never managed by this launcher
@@ -74,7 +76,7 @@ function parseOptions(argv) {
 function instanceKey(cwd) { return createHash("sha256").update(cwd).digest("hex").slice(0, 16); }
 function stateFileForCwd(cwd) { return path.join(STATE_DIR, `${instanceKey(cwd)}.json`); }
 function previousState(cwd) {
-  try { return JSON.parse(fs.readFileSync(stateFileForCwd(cwd), "utf8")); }
+  try { return readPrivateJson(stateFileForCwd(cwd)); }
   catch (err) { if (err.code === "ENOENT") return undefined; throw new Error("Invalid instance state; inspect it locally before restarting."); }
 }
 
@@ -264,6 +266,17 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
   if (JSON.stringify(latestEndpoint) !== JSON.stringify(endpoint)) throw new Error("Endpoint configuration changed during startup; retry.");
   const previous = previousState(cwd);
   const active = Boolean(previous && (isPidAlive(previous.pid) || isPidAlive(previous.childPid)));
+  // Decide under the lifecycle lock, before any token generation, release
+  // selection, port probe, replacement, or child process creation.
+  if (external && fixedStartupAction(active, rotateToken) === "add") {
+    if (opts.readOnly && previous.readOnly !== true) throw new Error("The running service is not read-only. Stop it locally to change its access policy; no window was added.");
+    const result = runWindowCommandLocked("add", { stateDir: STATE_DIR, endpoint: external, state: previous, currentScope: scope });
+    console.log(result.changed ? "Current window added to the existing fixed endpoint." : "Current window is already authorized.");
+    console.log("Authorized windows: " + result.authorizedWindows.join(", "));
+    console.log("MCP endpoint: https://" + external.hostname + "/mcp (use the existing authenticated URL; token unchanged)");
+    console.log("Existing supervisor, backend and port " + external.port + " unchanged.");
+    return;
+  }
   if (active && (previous.cwd !== cwd || previous.window !== scope.window || (previous.socket && previous.socket !== scope.socket) || (previous.serverPid && previous.serverPid !== scope.serverPid))) {
     throw new Error(external ? "Fixed endpoint is already running in another tmux window. Use codexpro_tmux add here, or stop it locally before restarting." : "Existing instance belongs to another tmux window; stop it locally before starting here.");
   }
@@ -345,7 +358,7 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
   };
   if (external) {
     await superviseExternal({ root: backendRoot, port, token, env, stateDir: STATE_DIR, key, releaseDir: RELEASE_DIR, releaseStartup,
-      onState: (childPid, release) => writePrivateJson(statePath, { pid: process.pid, childPid, cwd, window: scope.window, socket: scope.socket, serverPid: scope.serverPid, anchor: scope.anchor, port, external: true, release, supervisor: true, windowsFile }),
+      onState: (childPid, release) => writePrivateJson(statePath, { pid: process.pid, childPid, cwd, window: scope.window, socket: scope.socket, serverPid: scope.serverPid, anchor: scope.anchor, port, hostname: external.hostname, readOnly: opts.readOnly, external: true, release, supervisor: true, windowsFile }),
       onReady: () => printSummary({ scope, port, serverUrl: externalServerUrl(external, token), readOnly: opts.readOnly, rotateToken, external }),
       onExit: removeOwnState });
     return;
