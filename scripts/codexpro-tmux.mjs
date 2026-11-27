@@ -5,6 +5,7 @@ import { persistentToken, privateDirectory } from "./tmux-credentials.mjs";
 import { readExternalEndpoint, externalServerUrl } from "./tmux-endpoint.mjs";
 import { instanceLock, controlPath, writePrivateJson } from "./tmux-lifecycle.mjs";
 import { selectedRelease, superviseExternal } from "./tmux-supervisor.mjs";
+import { prepareWindows, runWindowCommand, windowsFileFor } from "./tmux-windows.mjs";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -21,9 +22,11 @@ const RELEASE_DIR = path.join(os.homedir(), ".codexpro", "tmux-releases");
 
 function usage(commandName) {
   console.log(`Usage: ${commandName} [--read-only] [--local] [--port <port>]
+       codexpro_tmux add | remove | list | status  (fixed endpoint; local only)
 
 Run in a shell pane inside the target tmux window (foreground keepalive).
-- Authorizes the current tmux window (excluding this launcher pane)
+- Initially authorizes the current tmux window (excluding this launcher pane)
+- Fixed endpoint: add/remove the current window locally; list/status show the active scope
 - Replaces an existing instance for the same directory and window only
 - Reuses its persistent local token (explicit rotate command changes it)
 - Prints the window's panes and the MCP Server URL (externally managed tunnel when configured)
@@ -214,6 +217,11 @@ function printSummary({ scope, port, serverUrl, readOnly, rotateToken, external 
 }
 
 export async function runCodexproTmux({ rotateToken = false, argv = process.argv.slice(2), commandName = rotateToken ? "codexpro_tmux_rotate" : "codexpro_tmux" } = {}) {
+  if (["add", "remove", "list", "status"].includes(argv[0])) {
+    if (rotateToken || argv.length !== 1) throw new Error("Use codexpro_tmux add|remove|list|status without options.");
+    console.log(JSON.stringify(runWindowCommand(argv[0], { stateDir: STATE_DIR, endpointFile: ENDPOINT_FILE })));
+    return;
+  }
   const opts = parseOptions(argv);
   if (opts.help) {
     usage(commandName);
@@ -257,6 +265,9 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
   }
   // Never change a legacy live token silently. Import it before stopping the old launcher.
   const token = persistentToken(CREDENTIAL_DIR, instanceKey(cwd), { initialToken: process.env.CODEXPRO_HTTP_TOKEN?.trim(), rotate: rotateToken, legacyRunning: active });
+  const windowsFile = external ? windowsFileFor(STATE_DIR, key) : "";
+  // Validate/prepare before stopping a live instance. Same live root preserves its list.
+  if (windowsFile) prepareWindows(windowsFile, scope);
   await replaceExistingCwdInstance(cwd, scope);
   const preferred = Number.isInteger(previous?.port) && !explicitPort ? previous.port : opts.preferredPort;
   const port = external ? external.port : await findFreePort(preferred, endpoint?.port);
@@ -286,6 +297,7 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
     CODEXPRO_TMUX_ONLY: "1",
     CODEXPRO_TMUX_AGENTS: "",
     CODEXPRO_TMUX_WINDOW: JSON.stringify(scope),
+    CODEXPRO_TMUX_WINDOWS_FILE: windowsFile,
     CODEXPRO_TMUX_ALLOW_SEND: opts.readOnly ? "0" : "1",
     CODEXPRO_HTTP_TOKEN: token,
     CODEXPRO_PORT: String(port),
@@ -307,7 +319,7 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
   };
   if (external) {
     await superviseExternal({ root: backendRoot, port, token, env, stateDir: STATE_DIR, key, releaseDir: RELEASE_DIR, releaseStartup,
-      onState: (childPid, release) => writePrivateJson(statePath, { pid: process.pid, childPid, cwd, window: scope.window, socket: scope.socket, serverPid: scope.serverPid, anchor: scope.anchor, port, external: true, release, supervisor: true }),
+      onState: (childPid, release) => writePrivateJson(statePath, { pid: process.pid, childPid, cwd, window: scope.window, socket: scope.socket, serverPid: scope.serverPid, anchor: scope.anchor, port, external: true, release, supervisor: true, windowsFile }),
       onReady: () => printSummary({ scope, port, serverUrl: externalServerUrl(external, token), readOnly: opts.readOnly, rotateToken, external }),
       onExit: removeOwnState });
     return;

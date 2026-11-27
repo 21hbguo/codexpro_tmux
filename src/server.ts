@@ -973,7 +973,7 @@ export function createCodexProServer(
     const agent = z.string().min(1).max(32).describe("Exact pane ID (e.g. %1) in local window mode, or locally registered alias in explicit registry mode.");
     registerCodexTool(config, server, "tmux_list_agents", {
       title: "List tmux agents",
-      description: "List candidate agent panes in the locally authorized tmux window or explicitly registered agents and their connection status. Does not determine whether an agent is idle.",
+      description: "List candidate agent panes in the locally authorized tmux windows or explicitly registered agents and their connection status. Does not determine whether an agent is idle.",
       inputSchema: { ...workspaceSchema },
       annotations: READ_ONLY_ANNOTATIONS
     }, (args) => {

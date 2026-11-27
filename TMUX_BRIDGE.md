@@ -43,7 +43,7 @@ Ordinary code staging does not restart the service. Fixed-endpoint activation re
 
 ## Direct pane selection
 
-Tell ChatGPT a pane ID (e.g. %1), or ask it to list candidates. Use `tmux list-panes` for optional local discovery. Eligible panes in the same authorized window are accessible regardless of working directory. Other windows, the launcher pane and common shells are excluded. Keep the launcher pane in the window. Candidate detection is not proof of agent identity; do not expose sensitive or unrelated applications.
+Tell ChatGPT a pane ID (e.g. %1), or ask it to list candidates. Use `tmux list-panes` for optional local discovery. Eligible panes in authorized windows are accessible regardless of working directory. Unauthorized windows, the launcher pane and common shells are excluded. Keep the launcher pane in the window. Candidate detection is not proof of agent identity; do not expose sensitive or unrelated applications.
 
 ## Optional: original repository mode and explicit registry
 
@@ -102,3 +102,9 @@ tmux_wait_for_change compares the raw revision to a prior revision. It polls at 
 - The bridge logs successful delivery metadata (message ID, alias, timestamp) to server stderr, not message content. No persistent research task history is implemented here; use the existing handoff and Git records for that.
 - Existing upstream HTTP token authentication remains mandatory for public access. Review SECURITY.md before exposing the endpoint. Do not enable full bash or automatic permission bypass for this feature.
 - Mock smoke tests cover guardrails and command construction. Real tmux/TUI compatibility should be verified with a harmless test message before running experiments.
+
+## Dynamic windows (fixed endpoint)
+
+After a one-time local supervisor restart with the new launcher, use the same MCP URL and token. From a normal shell in a window on the same tmux server, run `codexpro_tmux add` or `codexpro_tmux remove`. From any directory, `codexpro_tmux list` and `codexpro_tmux status` show authorized live window IDs without credentials. These commands always select the configured fixed endpoint. Repeated add/remove are idempotent; no HTTP or tunnel restart occurs. Existing MCP tools read the private allowlist on each operation, and dynamic list results include window IDs. No MCP tool can change it.
+
+The launcher pane stays excluded and pins the tmux server and original window, even if that window is removed from the allowlist. Keep it running. Closed windows become inaccessible and are pruned on the next local scope command. Authorization persists across backend updates and restarts with the same launcher identity; a different identity starts with only its own window. Removing and re-adding a window invalidates old revisions/cursors. Pending waits recheck authorization on each snapshot; removal is serialized against sends already in progress. Previously returned terminal content cannot be recalled. In-flight reads may have finished before removal. Up to 32 windows and 64 candidate panes per list are supported. Separate tmux servers, Quick Tunnel and explicit registry mode retain existing behavior. Invalid/missing authorization files fail closed; if a crash leaves a private .windows.lock directory, inspect the local process state before removing it. Keep local state out of Git.
