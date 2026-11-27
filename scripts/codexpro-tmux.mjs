@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { persistentToken, privateDirectory } from "./tmux-credentials.mjs";
+import { persistentToken, setPersistentToken, privateDirectory } from "./tmux-credentials.mjs";
 import { readExternalEndpoint, externalServerUrl, configureExternalEndpoint, selectLaunchEndpoint } from "./tmux-endpoint.mjs";
 import { instanceLock, controlPath, writePrivateJson, readPrivateJson } from "./tmux-lifecycle.mjs";
 import { selectedRelease, superviseExternal, assertWindowBackendCompatible } from "./tmux-supervisor.mjs";
@@ -43,6 +43,7 @@ MAINTENANCE
   codexpro_tmux update                   Fetch, test and activate backend
   codexpro_tmux update --stage-only      Prepare release without activation
   codexpro_tmux rotate                   Rotate token and start service
+  codexpro_tmux set-token                Save a custom token (hidden/stdin)
   codexpro_tmux help                     Show this help (-h, --help)
 
 START OPTIONS
@@ -256,6 +257,61 @@ function printSummary({ scope, port, serverUrl, readOnly, rotateToken, external 
   console.log("=====================================================");
 }
 
+async function readSecretToken() {
+  if (!process.stdin.isTTY) {
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of process.stdin) {
+      total += chunk.length;
+      if (total > 1024) throw new Error("Token input too long (max 512 characters).");
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks).toString("utf8").trim();
+  }
+  return new Promise((resolve, reject) => {
+    const stdin = process.stdin;
+    const wasRaw = Boolean(stdin.isRaw);
+    let value = "";
+    process.stderr.write("New token (hidden, 32-512 chars): ");
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding("utf8");
+    const cleanup = () => {
+      stdin.off("data", onData);
+      stdin.setRawMode(wasRaw);
+      stdin.pause();
+    };
+    const onData = (chunk) => {
+      for (const ch of chunk) {
+        if (ch === "\u0003") {
+          cleanup();
+          process.stderr.write("\n");
+          reject(new Error("Cancelled."));
+          return;
+        }
+        if (ch === "\r" || ch === "\n") {
+          cleanup();
+          process.stderr.write("\n");
+          resolve(value.trim());
+          return;
+        }
+        if (ch === "\u007f" || ch === "\b") {
+          value = value.slice(0, -1);
+          continue;
+        }
+        value += ch;
+        if (value.length > 1024) {
+          cleanup();
+          process.stderr.write("\n");
+          reject(new Error("Token input too long (max 512 characters)."));
+          return;
+        }
+      }
+    };
+    stdin.on("data", onData);
+  });
+}
+
 export async function runCodexproTmux({ rotateToken = false, argv = process.argv.slice(2), commandName = rotateToken ? "codexpro_tmux_rotate" : "codexpro_tmux" } = {}) {
   if (argv[0] === "help" || argv[0] === "-h" || argv[0] === "--help") {
     if (argv.length !== 1) throw new Error("Usage: codexpro_tmux help");
@@ -269,6 +325,30 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
   if (argv[0] === "rotate") {
     if (rotateToken) throw new Error("Use codexpro_tmux rotate.");
     return runCodexproTmux({ rotateToken: true, argv: argv.slice(1), commandName: "codexpro_tmux rotate" });
+  }
+  if (argv[0] === "set-token") {
+    if (rotateToken) throw new Error("Use codexpro_tmux set-token, not the rotation command.");
+    const args = argv.slice(1);
+    if (args.length === 1 && ["-h", "--help"].includes(args[0])) {
+      console.log("Usage: codexpro_tmux set-token\nSave a custom token (32-512 chars) for the configured fixed endpoint via hidden prompt or stdin.\nStop the running fixed supervisor first. Never pass tokens on the command line.");
+      return;
+    }
+    if (args.length !== 0) throw new Error("Do not pass tokens on the command line. Run codexpro_tmux set-token and enter it interactively, or pipe it via stdin.");
+    const endpoint = readExternalEndpoint(ENDPOINT_FILE);
+    if (!endpoint) throw new Error("Run codexpro_tmux setup <hostname> [--port <port>] first.");
+    const key = instanceKey(endpoint.cwd);
+    privateDirectory(STATE_DIR);
+    const release = instanceLock(STATE_DIR, key);
+    try {
+      const previous = previousState(endpoint.cwd);
+      const active = Boolean(previous && (isPidAlive(previous.pid) || isPidAlive(previous.childPid)));
+      if (active) throw new Error("Stop the fixed supervisor locally before changing its token.");
+      const rawToken = await readSecretToken();
+      setPersistentToken(CREDENTIAL_DIR, key, rawToken);
+      console.log("Saved custom token for fixed endpoint: https://" + endpoint.hostname + "/mcp (port " + endpoint.port + ")");
+      console.log("Start the service in your launcher tmux pane: codexpro_tmux");
+    } finally { release(); }
+    return;
   }
   if (argv[0] === "setup") {
     if (rotateToken) throw new Error("Use codexpro_tmux setup, not the rotation command.");

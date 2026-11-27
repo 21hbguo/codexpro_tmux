@@ -64,3 +64,15 @@ export function persistentToken(dir, key, { initialToken, rotate = false, legacy
     return token;
   } finally { fs.rmSync(temp, { force: true }); }
 }
+export function setPersistentToken(dir, key, rawToken) {
+  if (!/^[a-f0-9]{16}$/.test(key)) throw new Error("Invalid instance key.");
+  privateDirectory(dir);
+  const token = validateToken(typeof rawToken === "string" ? rawToken.trim() : "");
+  const file = path.join(dir, key + ".token");
+  const temp = path.join(dir, "." + key + "-" + randomBytes(12).toString("hex"));
+  try {
+    fs.writeFileSync(temp, token + "\n", { mode: 0o600, flag: "wx" });
+    fs.renameSync(temp, file);
+    return token;
+  } finally { fs.rmSync(temp, { force: true }); }
+}

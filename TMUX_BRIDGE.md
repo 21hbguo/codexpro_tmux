@@ -115,4 +115,4 @@ A normal `codexpro_tmux` invocation uses the saved fixed endpoint, from any work
 
 ### CLI help
 
-Run `codexpro_tmux help` for the command reference. Use `codexpro_tmux update` for backend updates, `codexpro_tmux add` for local authorization, and `codexpro_tmux rotate` for explicit token rotation after stopping the fixed service. The old underscore-suffixed command aliases remain compatible.
+Run `codexpro_tmux help` for the command reference. Use `codexpro_tmux update` for backend updates, `codexpro_tmux add` for local authorization, `codexpro_tmux rotate` for explicit random token rotation after stopping the fixed service, and `codexpro_tmux set-token` (hidden prompt or stdin, never CLI arguments) to save a custom token (32–512 characters) after stopping the fixed service. The old underscore-suffixed command aliases remain compatible.
