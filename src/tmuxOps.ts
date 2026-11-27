@@ -1,12 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
-import { realpathSync } from "node:fs";
+import { realpathSync, openSync, closeSync, fstatSync, readFileSync, lstatSync, constants, mkdirSync, rmdirSync } from "node:fs";
 import path from "node:path";
 import type { CodexProConfig } from "./config.js";
 import { CodexProError, isSubpath } from "./guard.js";
 import { hasSecretValue, redactSensitiveText } from "./redact.js";
 
+export const TMUX_WINDOW_AUTH_VERSION = 1;
 export const TMUX_TOOLS = ["tmux_list_agents", "tmux_read_output", "tmux_send_message", "tmux_wait_for_change"] as const;
 const CACHE_LIMIT = 64;
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -21,8 +22,11 @@ const SHELL = /^(?:-)?(?:bash|sh|dash|zsh|fish|ksh|csh|tcsh|ash|nu|nushell|xonsh
 const FORMAT = ["#{pane_id}", "#{pid}", "#{pane_pid}", "#{pane_current_command}", "#{pane_dead}", "#{pane_in_mode}", "#{pane_current_path}", "#{socket_path}", "#{window_id}"].join("\t");
 type Runner = (socket: string | undefined, args: string[], input?: string) => string;
 type Pane = { pane: string; serverPid: string; panePid: string; command: string; dead: string; inMode: string; cwd: string; socket: string; window: string };
-type Binding = { pane: string; serverPid: string; panePid: string; command: string; socket: string; workspace?: string; window?: string };
-type WindowScope = { anchor: string; serverPid: string; anchorPid: string; socket: string; window: string };
+type Binding = { pane: string; serverPid: string; panePid: string; command: string; socket: string; workspace?: string; window?: string; epoch?: string };
+export type WindowScope = { anchor: string; serverPid: string; anchorPid: string; socket: string; window: string };
+export type WindowAuthorization = { version: 1; root: WindowScope; windows: { window: string; epoch: string }[] };
+const MAX_WINDOWS = 32;
+const EPOCH = /^[a-f0-9-]{36}$/;
 type Snapshot = { raw: string; revision: string; inMode: string };
 type CachedView = { identity: string; output: string; revision: string; createdAt: number };
 
@@ -78,9 +82,9 @@ export function registerTmuxAgent(workspace: string, paneId: string, run: Runner
 }
 
 // Created by a local launcher before the public MCP server starts, never via MCP.
-export function authorizeTmuxWindow(anchor: string, run: Runner = runTmux): WindowScope {
+export function authorizeTmuxWindow(anchor: string, run: Runner = runTmux, socket?: string): WindowScope {
   if (!PANE.test(anchor)) fail("Start the bridge inside a tmux shell pane (TMUX_PANE is missing or invalid).");
-  const p = paneInfo(run, undefined, anchor);
+  const p = paneInfo(run, socket, anchor);
   if (p.dead !== "0") fail("Launcher pane is dead.");
   return { anchor: p.pane, serverPid: p.serverPid, anchorPid: p.panePid, socket: p.socket, window: p.window };
 }
@@ -96,6 +100,47 @@ function parseWindowScope(raw: string): WindowScope {
       typeof s.window !== "string" || !WINDOW.test(s.window) ||
       typeof s.socket !== "string" || !path.isAbsolute(s.socket)) fail("Invalid local tmux window authorization.");
   return s as WindowScope;
+}
+
+export function sameWindowScope(a: WindowScope, b: WindowScope): boolean {
+  return a.anchor === b.anchor && a.anchorPid === b.anchorPid && a.serverPid === b.serverPid && a.socket === b.socket && a.window === b.window;
+}
+
+// Path is selected by the local launcher only. Missing/invalid state fails closed.
+export function readWindowAuthorization(file: string): WindowAuthorization {
+  if (!path.isAbsolute(file) || !file.endsWith(".windows.json")) fail("Invalid local window authorization path.");
+  const parent = lstatSync(path.dirname(file));
+  if (!parent.isDirectory() || parent.isSymbolicLink() || (process.getuid && parent.uid !== process.getuid()) || (parent.mode & 0o077)) fail("Invalid private window authorization directory.");
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.nlink !== 1 || (process.getuid && st.uid !== process.getuid()) || (st.mode & 0o077) || st.size > 8192) fail("Invalid private window authorization file.");
+    const data = JSON.parse(readFileSync(fd, "utf8")) as WindowAuthorization;
+    if (!data || data.version !== 1 || !Array.isArray(data.windows) || data.windows.length > MAX_WINDOWS) fail("Invalid window authorization list.");
+    const root = parseWindowScope(JSON.stringify(data.root));
+    const seen = new Set<string>();
+    for (const w of data.windows) {
+      if (!w || typeof w.window !== "string" || !WINDOW.test(w.window) || typeof w.epoch !== "string" || !EPOCH.test(w.epoch) || seen.has(w.window)) fail("Invalid or duplicate window authorization.");
+      seen.add(w.window);
+    }
+    return { version: 1, root, windows: data.windows.map(w => ({ window: w.window, epoch: w.epoch })) };
+  } finally { closeSync(fd); }
+}
+
+// Serialize mutations and sends across processes; never hold the lock across a wait.
+export function withWindowAuthorizationLock<T>(file: string, fn: () => T): T {
+  const lock = file.replace(/\.json$/, ".lock");
+  try { mkdirSync(lock, { mode: 0o700 }); }
+  catch { return fail("Window authorization is locked; retry locally or inspect a stale lock."); }
+  try { return fn(); } finally { rmdirSync(lock); }
+}
+export function verifyLocalWindowRoot(root: WindowScope): void {
+  const current = authorizeTmuxWindow(root.anchor, runTmux, root.socket);
+  if (!sameWindowScope(root, current)) fail("Launcher window changed; restart the local bridge.");
+}
+export function liveLocalWindowIds(root: WindowScope): Set<string> {
+  verifyLocalWindowRoot(root);
+  return new Set(runTmux(root.socket, ["list-windows", "-a", "-F", "#{window_id}"]).split(/\r?\n/).filter(id => WINDOW.test(id)));
 }
 
 function parseBindings(raw: string): Map<string, Binding> {
@@ -128,15 +173,19 @@ export class TmuxBridge {
   private readonly scope?: WindowScope;
   // Per MCP bridge/session; only bounded, redacted terminal views are retained.
   private readonly views = new Map<string, CachedView>();
-  constructor(registry: string, private readonly run: Runner = runTmux, windowAuthorization = "") {
+  constructor(registry: string, private readonly run: Runner = runTmux, windowAuthorization = "", private readonly authorizationFile = "") {
     if (registry.trim() && windowAuthorization.trim()) fail("Choose window mode or explicit registry, not both.");
     this.scope = windowAuthorization.trim() ? parseWindowScope(windowAuthorization) : undefined;
+    if (this.authorizationFile && !this.scope) fail("Dynamic window authorization requires local window mode.");
     this.bindings = this.scope ? new Map() : parseBindings(registry);
+    if (this.authorizationFile) this.authorizedWindows();
   }
 
   static fromEnvironment(): TmuxBridge {
     if (tmuxOnlyMode() && (!process.env.CODEXPRO_TMUX_WINDOW?.trim() || process.env.CODEXPRO_TMUX_AGENTS?.trim())) fail("tmux-only mode requires a locally authorized window.");
-    return new TmuxBridge(process.env.CODEXPRO_TMUX_AGENTS ?? "", runTmux, process.env.CODEXPRO_TMUX_WINDOW ?? "");
+    const file = process.env.CODEXPRO_TMUX_WINDOWS_FILE ?? "";
+    if (file && !tmuxOnlyMode()) fail("Dynamic window authorization requires tmux-only mode.");
+    return new TmuxBridge(process.env.CODEXPRO_TMUX_AGENTS ?? "", runTmux, process.env.CODEXPRO_TMUX_WINDOW ?? "", file);
   }
 
   private verifyWindow(scope: WindowScope): void {
@@ -145,13 +194,22 @@ export class TmuxBridge {
         p.window !== scope.window || p.dead !== "0") fail("Authorized tmux window changed; restart the local bridge.");
   }
 
+  private authorizedWindows(): WindowAuthorization["windows"] {
+    if (!this.scope || !this.authorizationFile) fail("Dynamic window authorization is not enabled.");
+    this.verifyWindow(this.scope);
+    const data = readWindowAuthorization(this.authorizationFile);
+    if (!sameWindowScope(this.scope, data.root)) fail("Window authorization does not match the local launcher.");
+    return data.windows;
+  }
+
   private windowBinding(scope: WindowScope, agent: string): Binding {
     if (!PANE.test(agent) || agent === scope.anchor) fail("Target is not an authorized agent pane in this window.");
     this.verifyWindow(scope);
     const p = paneInfo(this.run, scope.socket, agent);
-    if (p.socket !== scope.socket || p.serverPid !== scope.serverPid || p.window !== scope.window) fail("Target pane is outside the authorized tmux window.");
+    const authorization = this.authorizationFile ? this.authorizedWindows().find(w => w.window === p.window) : undefined;
+    if (p.socket !== scope.socket || p.serverPid !== scope.serverPid || (this.authorizationFile ? !authorization : p.window !== scope.window)) fail("Target pane is outside the authorized tmux windows.");
     requireAgent(p);
-    return { pane: p.pane, serverPid: p.serverPid, panePid: p.panePid, command: p.command, socket: p.socket, window: p.window };
+    return { pane: p.pane, serverPid: p.serverPid, panePid: p.panePid, command: p.command, socket: p.socket, window: p.window, ...(authorization ? { epoch: authorization.epoch } : {}) };
   }
 
   private binding(workspace: string | undefined, agent: string): Binding {
@@ -163,6 +221,7 @@ export class TmuxBridge {
 
   private verify(b: Binding): Pane {
     if (this.scope) this.verifyWindow(this.scope);
+    if (this.authorizationFile && !this.authorizedWindows().some(w => w.window === b.window && w.epoch === b.epoch)) fail("Window authorization changed; read again after local add.");
     const p = paneInfo(this.run, b.socket, b.pane);
     if (p.socket !== b.socket || p.serverPid !== b.serverPid || p.panePid !== b.panePid ||
         p.command !== b.command || (b.window !== undefined && p.window !== b.window)) fail("Pane identity changed; read again or re-register locally.");
@@ -174,13 +233,21 @@ export class TmuxBridge {
     if (this.scope) {
       const scope = this.scope;
       this.verifyWindow(scope);
-      const ids = this.run(scope.socket, ["list-panes", "-t", scope.window, "-F", "#{pane_id}"]).split(/\r?\n/).filter(id => PANE.test(id) && id !== scope.anchor);
+      const windows = this.authorizationFile ? this.authorizedWindows().map(w => w.window) : [scope.window];
+      const ids: string[] = [];
+      for (const window of windows) {
+        let panes: string;
+        try { panes = this.run(scope.socket, ["list-panes", "-t", window, "-F", "#{pane_id}"]); }
+        catch (error) { if (!this.authorizationFile) throw error; continue; }
+        ids.push(...panes.split(/\r?\n/).filter(id => PANE.test(id) && id !== scope.anchor));
+        if (ids.length > 64) fail("Too many panes in the authorized windows; remove unused windows.");
+      }
       if (ids.length > 64) fail("Too many panes in the authorized window; use a dedicated smaller window.");
       return ids.flatMap(agent => {
         try {
           const b = this.windowBinding(scope, agent);
           const p = this.verify(b);
-          return [{ agent, pane: p.pane, command: p.command, status: p.inMode === "0" ? "connected" : "copy_mode", activity: "unknown" }];
+          return [{ agent, pane: p.pane, command: p.command, ...(this.authorizationFile ? { window: p.window } : {}), status: p.inMode === "0" ? "connected" : "copy_mode", activity: "unknown" }];
         } catch { return []; }
       });
     }
@@ -290,6 +357,11 @@ export class TmuxBridge {
   }
 
   send(workspace: string | undefined, agent: string, message: string, expectedRevision: string, submit: boolean) {
+    const perform = () => this.sendUnlocked(workspace, agent, message, expectedRevision, submit);
+    return this.authorizationFile ? withWindowAuthorizationLock(this.authorizationFile, perform) : perform();
+  }
+
+  private sendUnlocked(workspace: string | undefined, agent: string, message: string, expectedRevision: string, submit: boolean) {
     if (typeof message !== "string" || !message.trim() || message.length > 4000 ||
         /[\x00-\x1f\x7f-\x9f\u2028\u2029]/u.test(message)) fail("Use a nonempty single-line message (max 4000 characters), without control characters.");
     if (hasSecretValue(message)) fail("Message appears to contain a secret.");

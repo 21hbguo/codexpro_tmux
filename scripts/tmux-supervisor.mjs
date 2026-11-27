@@ -1,11 +1,23 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { checkedRelease, controlPath, instanceLock, readPrivateJson, writePrivateJson } from "./tmux-lifecycle.mjs";
 
+// A backend that ignores the allowlist must never bind the routed port.
+// Check the compiled interface in a separate, credential-free process.
+export function assertWindowBackendCompatible(root) {
+  const probe = spawnSync(process.execPath, ["--input-type=module", "-e",
+    "const m = await import(process.argv[1]); if (m.TMUX_WINDOW_AUTH_VERSION !== 1) process.exit(1);",
+    pathToFileURL(path.join(root, "dist", "tmuxOps.js")).href],
+    { cwd: root, env: { PATH: process.env.PATH ?? "", LC_ALL: "C" }, timeout: 5000, stdio: "ignore" });
+  if (probe.error || probe.status !== 0) throw new Error("Backend does not support dynamic window authorization v1; refusing unsafe downgrade.");
+}
+
 function spawnBackend(root, port, env) {
+  if (env.CODEXPRO_TMUX_WINDOWS_FILE) assertWindowBackendCompatible(root);
   // Direct HTTP child, no tunnel process or profile mutations. Explicit policy.
   const child = spawn(process.execPath, [path.join(root, "dist", "http.js"), "--root", root, "--host", "127.0.0.1", "--port", String(port), "--write", "off", "--bash", "off", "--codex-sessions", "off", "--tool-mode", "standard"], {
     cwd: root, env: { ...env, CODEXPRO_PORT: String(port), CODEXPRO_ROOT: root }, stdio: ["ignore", "inherit", "inherit"]
@@ -28,7 +40,7 @@ async function stopBackend(handle) {
   }
   if (!handle.exited) throw new Error("Backend did not stop; refusing to start another process.");
 }
-async function ready(handle, port, token) {
+async function ready(handle, port, token, dynamicWindows) {
   const deadline = Date.now() + 12000;
   while (Date.now() < deadline && !handle.exited) {
     try {
@@ -37,7 +49,7 @@ async function ready(handle, port, token) {
       });
       if (response.ok) {
         const body = await response.json();
-        if (!handle.exited && body.ok === true && body.mode === "tmux-only" && body.authEnabled === true) return;
+        if (!handle.exited && body.ok === true && body.mode === "tmux-only" && body.authEnabled === true && (!dynamicWindows || body.windowAuthorizationVersion === 1)) return;
       }
     } catch {}
     await sleep(150);
@@ -72,13 +84,14 @@ export async function superviseExternal({ root, port, token, env, stateDir, key,
   const safeEnv = Object.fromEntries(Object.entries(env).filter(([k]) => !/^(CODEXPRO_|CODEBASE_BRIDGE_)/.test(k)));
   Object.assign(safeEnv, {
     CODEXPRO_TMUX_ONLY: "1", CODEXPRO_TMUX_AGENTS: "", CODEXPRO_TMUX_WINDOW: env.CODEXPRO_TMUX_WINDOW,
+    CODEXPRO_TMUX_WINDOWS_FILE: env.CODEXPRO_TMUX_WINDOWS_FILE ?? "",
     CODEXPRO_TMUX_ALLOW_SEND: env.CODEXPRO_TMUX_ALLOW_SEND, CODEXPRO_HTTP_TOKEN: token,
     CODEXPRO_HOST: "127.0.0.1", CODEXPRO_REQUIRE_HTTP_TOKEN: "1", CODEXPRO_ALLOW_NO_HTTP_TOKEN: "0",
     CODEXPRO_CONNECTION_TEST: "0"
   });
   async function start(root, targetPort) {
     const h = spawnBackend(root, targetPort, safeEnv);
-    try { await ready(h, targetPort, token); return h; }
+    try { await ready(h, targetPort, token, Boolean(safeEnv.CODEXPRO_TMUX_WINDOWS_FILE)); return h; }
     catch (error) { await stopBackend(h); throw error; }
   }
   function watch(h) {

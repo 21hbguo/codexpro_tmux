@@ -47,7 +47,7 @@ git clone https://github.com/21hbguo/codexpro_tmux.git
 cd codexpro_tmux
 npm ci
 npm run tmux:smoke
-export BRIDGE="$PWD"
+npm run tmux:install
 ```
 
 `npm run tmux:smoke` 会构建 TypeScript 并运行模拟测试。若失败请先排查，不要继续部署；模拟测试不等同于真实 Agent 联调。
@@ -57,11 +57,11 @@ export BRIDGE="$PWD"
 在专用 tmux Window 内启动一个或多个 Agent，再新建一个普通 Shell pane，在**任意目录**执行：
 
 ```bash
-export BRIDGE="/absolute/path/to/codexpro_tmux"
-node "$BRIDGE/scripts/tmux-start.mjs" setup
+codexpro_tmux setup bridge.example.com
+codexpro_tmux
 ```
 
-无需选择 Workspace、无需注册 Agent。向导只配置端口、HTTPS 隧道和认证，安装目录仅作为内部配置索引，不授予文件访问权限。默认仅暴露四个 tmux 工具，使用 `setup --read-only` 可禁用发送。保护 MCP URL，专用 Window 内不要放无关或敏感程序。
+将 `bridge.example.com` 换成自己的域名。首次 setup 持久化域名和端口（默认 8790），已有配置直接复用。将 Cloudflare Named Tunnel 或 HTTPS 反向代理指向 `http://127.0.0.1:8790`；工具不会修改 DNS 或隧道。无固定域名时显式使用 `codexpro_tmux --quick-tunnel`，不会自动回退。启动时加 `--read-only` 可禁用发送。保护 MCP URL，不要授权含敏感程序的 Window。
 
 ## 在 ChatGPT 中连接
 
@@ -82,10 +82,10 @@ CodexPro 的认证就在这个 URL 里的 token。不要分享该 URL。
 在目标 Window 的普通 Shell pane 中执行（任意目录）：
 
 ```bash
-node "$BRIDGE/scripts/tmux-start.mjs" start
+codexpro_tmux
 ```
 
-新 Shell 中重新设置 BRIDGE 为安装路径。加 `--read-only` 可禁用发送。直接告诉 ChatGPT pane ID，例如 %1，或让它查询候选 Agent。也可以自行运行 `tmux list-panes`。同 Window 中不同工作目录的 Agent 均可通信，无需注册或重启。发送前先读取并确认空白的 Agent 输入框。
+固定域名、端口和 Token 不随工作目录变化。同一 tmux server 的其他 Window 再执行 `codexpro_tmux`，自动加入原服务后退出；也可以显式使用 `codexpro_tmux add`，使用 `codexpro_tmux remove` 移除。重复启动不重启在线服务、不生成新 URL/Token。`codexpro_tmux update` 在任意目录运行。加 `--read-only` 可禁用发送。直接告诉 ChatGPT pane ID，例如 %1，或让它查询候选 Agent。也可以自行运行 `tmux list-panes`。同 Window 中不同工作目录的 Agent 均可通信，无需注册或重启。发送前先读取并确认空白的 Agent 输入框。
 
 读取支持 cursor 增量快照；新增有限等待工具检测终端输出变化，不将其误判为任务完成。详见 [TMUX_BRIDGE.md](TMUX_BRIDGE.md)。
 
@@ -230,3 +230,7 @@ npm run tmux:smoke
 ## 本 fork：tmux Agent Bridge
 
 支持向本地明确注册的 tmux Agent pane 读取输出、发送消息。默认关闭；部署、权限和限制见 [tmux bridge 指南](TMUX_BRIDGE.md)。
+
+### 命令帮助
+
+运行 `codexpro_tmux help` 查看完整命令。所有日常操作统一为子命令；旧的下划线 update/rotate 命令仍兼容。update 更新代码，add 只增加授权 Window，rotate 显式更换 Token（先停止固定服务）。

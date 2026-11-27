@@ -19,7 +19,7 @@ import {
 } from "./profileStore.js";
 import { redactSensitiveText, redactStructured } from "./redact.js";
 import { createCodexProServer } from "./server.js";
-import { tmuxOnlyMode } from "./tmuxOps.js";
+import { tmuxOnlyMode, TmuxBridge, TMUX_WINDOW_AUTH_VERSION } from "./tmuxOps.js";
 import { WorkspaceRegistry } from "./guard.js";
 import { redactConfigPaths } from "./pathLabels.js";
 import { CODEXPRO_VERSION } from "./version.js";
@@ -1447,6 +1447,9 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig();
+  // Validate the local scope before opening any HTTP listener; never silently use static mode.
+  const dynamicWindows = Boolean(process.env.CODEXPRO_TMUX_WINDOWS_FILE);
+  if (dynamicWindows) TmuxBridge.fromEnvironment();
   if ((config.requireHttpToken || tmuxOnlyMode()) && !config.authToken) {
     throw new Error(
       "CODEXPRO_HTTP_TOKEN is required for this HTTP binding. " +
@@ -1680,7 +1683,7 @@ async function main(): Promise<void> {
   app.use((req, res, next) => {
     if (!tmuxOnlyMode() || req.path === "/mcp") { next(); return; }
     if (req.method === "GET" && ["/", "/setup", "/healthz"].includes(req.path)) {
-      res.json({ ok: true, name: "CodexPro TMUX", mode: "tmux-only", authEnabled: true }); return;
+      res.json({ ok: true, name: "CodexPro TMUX", mode: "tmux-only", authEnabled: true, ...(dynamicWindows ? { windowAuthorizationVersion: TMUX_WINDOW_AUTH_VERSION } : {}) }); return;
     }
     res.status(404).json({ error: "Unavailable in tmux-only mode" });
   });
