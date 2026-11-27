@@ -1,12 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readPrivateJson, writePrivateJson, instanceLock, controlPath } from "./tmux-lifecycle.mjs";
 import { privateDirectory } from "./tmux-credentials.mjs";
-import { readExternalEndpoint } from "./tmux-endpoint.mjs";
+import { readExternalEndpoint, fixedInstanceKey } from "./tmux-endpoint.mjs";
 import { authorizeTmuxWindow, sameWindowScope, readWindowAuthorization, verifyLocalWindowRoot, liveLocalWindowIds, withWindowAuthorizationLock } from "../dist/tmuxOps.js";
 
-const keyFor = cwd => createHash("sha256").update(cwd).digest("hex").slice(0, 16);
 export const windowsFileFor = (stateDir, key) => path.join(stateDir, key + ".windows.json");
 
 // Invoked under the lifecycle lock. A different launcher identity never inherits old window permissions.
@@ -27,9 +26,9 @@ function alive(pid) {
 }
 export function runWindowCommand(action, { stateDir, endpointFile, cwd = fs.realpathSync(process.cwd()) }) {
   if (!["add", "remove", "list", "status"].includes(action)) throw new Error("Unknown window command.");
-  const endpoint = readExternalEndpoint(endpointFile, cwd);
+  const endpoint = readExternalEndpoint(endpointFile);
   if (!endpoint) throw new Error("Dynamic window commands require a configured fixed endpoint.");
-  const key = keyFor(endpoint.cwd);
+  const key = fixedInstanceKey(endpoint);
   privateDirectory(stateDir);
   const release = instanceLock(stateDir, key);
   try {
@@ -59,7 +58,7 @@ export function runWindowCommand(action, { stateDir, endpointFile, cwd = fs.real
         }
       }
       if (changed) writePrivateJson(file, { ...data, windows });
-      return { action, window, changed, authorizedWindows: windows.map(w => w.window), ...(action === "status" ? { port: state.port, supervisorPid: state.pid, backendPid: state.childPid } : {}) };
+      return { action, window, changed, authorizedWindows: windows.map(w => w.window), ...(action === "status" ? { hostname: endpoint.hostname, port: state.port, supervisorPid: state.pid, backendPid: state.childPid } : {}) };
     });
   } finally { release(); }
 }

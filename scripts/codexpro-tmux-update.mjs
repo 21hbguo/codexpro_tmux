@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // Stage first, then ask a compatible local foreground supervisor to activate. Never rotate credentials.
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { controlPath, requestActivation, writePrivateJson, readPrivateJson } from "./tmux-lifecycle.mjs";
-import { readExternalEndpoint } from "./tmux-endpoint.mjs";
+import { readExternalEndpoint, fixedInstanceKey } from "./tmux-endpoint.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -43,12 +42,11 @@ try {
       throw error;
     }
     // Staged release must remain on disk even if activation response is lost.
-    const cwd = fs.realpathSync(process.cwd());
     const stateDir = path.join(os.homedir(), ".codexpro", "tmux-instances");
-    const key = createHash("sha256").update(cwd).digest("hex").slice(0, 16);
-    const endpoint = readExternalEndpoint(path.join(os.homedir(), ".codexpro", "tmux-endpoint.json"), cwd);
-    const state = readPrivateJson(path.join(stateDir, key + ".json"));
-    if (args.includes("--stage-only") || !endpoint?.selected || !state?.supervisor || !state.external || state.port !== endpoint.port || state.cwd !== cwd) {
+    const endpoint = readExternalEndpoint(path.join(os.homedir(), ".codexpro", "tmux-endpoint.json"));
+    const key = endpoint ? fixedInstanceKey(endpoint) : undefined;
+    const state = key ? readPrivateJson(path.join(stateDir, key + ".json")) : undefined;
+    if (args.includes("--stage-only") || !endpoint || !state?.supervisor || !state.external || state.port !== endpoint.port || state.cwd !== endpoint.cwd) {
       console.log("Staging only: no compatible active fixed-endpoint supervisor selected. No live changes.");
     } else {
       privateDirectory(stateDir);
