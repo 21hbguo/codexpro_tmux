@@ -199,7 +199,7 @@ function isPortListening(port, host = "127.0.0.1") {
   });
 }
 
-function listWindowPanes(scope) {
+function listWindowPanes(scope, { launcherAnchor = scope.anchor, invokingPane } = {}) {
   const args = [
     ...(scope.socket ? ["-S", scope.socket] : []),
     "list-panes",
@@ -216,12 +216,25 @@ function listWindowPanes(scope) {
     .map((line) => {
       const [pane, command, cwd, inMode, dead] = line.split("\t");
       let role = "agent";
-      if (pane === scope.anchor) role = "launcher (excluded)";
+      if (pane === launcherAnchor) role = "launcher (excluded)";
       else if (dead !== "0") role = "dead (excluded)";
+      else if (pane === invokingPane) role = "current shell (start agent to use)";
       else if (SHELL_RE.test(path.basename(command || ""))) role = "shell (start agent to use)";
       else if (inMode !== "0") role = "agent (copy_mode)";
       return { pane, command, cwd, role };
     });
+}
+
+function printWindowPanes(window, panes) {
+  console.log("");
+  console.log(`Panes in ${window}:`);
+  if (!panes.length) {
+    console.log("  (none found)");
+  } else {
+    for (const p of panes) {
+      console.log(`  ${p.pane.padEnd(5)} [${p.role}]  ${p.command}  ${p.cwd}`);
+    }
+  }
 }
 
 function printSummary({ scope, port, serverUrl, readOnly, rotateToken, external }) {
@@ -237,15 +250,7 @@ function printSummary({ scope, port, serverUrl, readOnly, rotateToken, external 
     console.log("Tunnel : externally managed (local backend ready; public routing not verified)");
   }
   console.log(`URL    : ${serverUrl}`);
-  console.log("");
-  console.log(`Panes in ${scope.window}:`);
-  if (!panes.length) {
-    console.log("  (none found)");
-  } else {
-    for (const p of panes) {
-      console.log(`  ${p.pane.padEnd(5)} [${p.role}]  ${p.command}  ${p.cwd}`);
-    }
-  }
+  printWindowPanes(scope.window, panes);
   console.log("-----------------------------------------------------");
   console.log("Foreground keepalive active. Press Ctrl+C to stop.");
   console.log("=====================================================");
@@ -313,6 +318,7 @@ export async function runCodexproTmux({ rotateToken = false, argv = process.argv
     console.log("Authorized windows: " + result.authorizedWindows.join(", "));
     console.log("MCP endpoint: https://" + external.hostname + "/mcp (use the existing authenticated URL; token unchanged)");
     console.log("Existing supervisor, backend and port " + external.port + " unchanged.");
+    printWindowPanes(scope.window, listWindowPanes(scope, { launcherAnchor: previous.anchor, invokingPane: scope.anchor }));
     return;
   }
   if (active && (previous.cwd !== cwd || previous.window !== scope.window || (previous.socket && previous.socket !== scope.socket) || (previous.serverPid && previous.serverPid !== scope.serverPid))) {
